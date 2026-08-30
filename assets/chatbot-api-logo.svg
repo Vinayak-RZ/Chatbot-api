@@ -1,7 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 160" width="560" height="160" role="img" aria-label="Chatbot-api">
-  <rect width="560" height="160" fill="none"/>
-  <rect x="24" y="28" width="104" height="104" rx="24" fill="#1a1a1a"/>
-  <path d="M48 70c0-12 10-22 22-22h28c12 0 22 10 22 22v18c0 12-10 22-22 22H78l-14 12v-12c-12 0-22-10-22-22V70z" fill="none" stroke="#5EEAD4" stroke-width="4" stroke-linejoin="round"/>
-  <path d="M62 78h36M62 92h24" stroke="#F5F5F5" stroke-width="3.5" stroke-linecap="round"/>
-  <text x="152" y="98" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="44" font-weight="700" fill="#1a1a1a">Chatbot-api</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Chatbot-api">
+  <!-- Transparent canvas — orange (#F97316) + white mark only; no background rect -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Chat bubble outline (open on the right for the plug) -->
+    <path
+      d="M150 168
+         c0-32 26-58 58-58
+         h120
+         c32 0 58 26 58 58
+         v20
+         M386 284
+         v20
+         c0 32-26 58-58 58
+         H246
+         l-34 30
+         v-30
+         c-32 0-58-26-58-58
+         V168"
+      stroke="#F97316"
+      stroke-width="32"
+    />
+
+    <!-- Left code bracket < (white) -->
+    <path d="M218 200 L178 240 L218 280" stroke="#FFFFFF" stroke-width="26"/>
+
+    <!-- Colon bars (orange) -->
+    <rect x="244" y="220" width="32" height="14" rx="7" fill="#F97316" stroke="none"/>
+    <rect x="244" y="246" width="32" height="14" rx="7" fill="#F97316" stroke="none"/>
+
+    <!-- Combined > bracket + plug (white) -->
+    <path d="M300 200 L340 240 L300 280" stroke="#FFFFFF" stroke-width="26"/>
+    <path
+      d="M340 240
+         h20
+         M360 214
+         v52
+         M360 214
+         h48
+         M360 266
+         h48"
+      stroke="#FFFFFF"
+      stroke-width="24"
+    />
+    <circle cx="416" cy="214" r="12" fill="#FFFFFF" stroke="none"/>
+    <circle cx="416" cy="266" r="12" fill="#FFFFFF" stroke="none"/>
+  </g>
 </svg>
