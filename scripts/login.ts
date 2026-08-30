@@ -11,7 +11,11 @@ const out = path.resolve(process.env.STORAGE_STATE_PATH || './data/storage-state
 
 async function main() {
   mkdirSync(path.dirname(out), { recursive: true });
-  const browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' });
+  const browser = await chromium.launch({
+    headless: ['1', 'true', 'yes', 'on'].includes(
+      String(process.env.HEADLESS ?? 'false').toLowerCase(),
+    ),
+  });
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto(`${mockUrl}/auth/login`, { waitUntil: 'domcontentloaded' });
