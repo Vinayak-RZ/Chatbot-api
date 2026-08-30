@@ -180,10 +180,21 @@ export class BrowserManager {
 
     this.context = context;
 
+    // Chromium tears down launchPersistentContext when the last page closes.
+    // Keep one tab and open the Chatbot URL so the headed window is useful immediately.
+    let keep = context.pages().find((p) => !p.isClosed()) ?? (await context.newPage());
     for (const p of context.pages()) {
-      if (p.url() === 'about:blank') {
+      if (p !== keep && !p.isClosed()) {
         await p.close().catch(() => undefined);
       }
+    }
+    try {
+      await keep.goto(this.config.chatbotUrl, { waitUntil: 'domcontentloaded' });
+    } catch (err) {
+      logger.warn(
+        { err },
+        'Could not open Chatbot URL on launch — window stays open; retries on first request',
+      );
     }
   }
 
@@ -233,7 +244,7 @@ export class BrowserManager {
         if (/ERR_CONNECTION_REFUSED|ECONNREFUSED|net::ERR_/i.test(msg)) {
           throw new AppError(
             'BROWSER_UNAVAILABLE',
-            `Cannot reach CHATBOT_URL (${this.config.chatbotUrl}): ${msg}`,
+            `Cannot reach Chatbot URL: ${msg}`,
             503,
           );
         }
@@ -248,7 +259,7 @@ export class BrowserManager {
     } catch {
       throw new AppError(
         'SELECTOR_NOT_FOUND',
-        'Chat composer (#prompt-textarea) not found — is CHATBOT_URL the chat UI / are you logged in?',
+        'Chat composer (#prompt-textarea) not found — is the Chatbot URL the chat UI / are you logged in?',
         502,
       );
     }

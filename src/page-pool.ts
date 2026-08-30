@@ -164,20 +164,18 @@ export class PagePool {
   }
 
   private async replacePage(slot: Slot): Promise<void> {
-    if (!this.browser.isCdp) {
-      await slot.page.close().catch(() => undefined);
-    }
     try {
+      // Open the replacement before closing the old tab — closing the last page
+      // would shut down a persistent Chromium context.
       const page = await this.browser.newPage();
+      const old = slot.page;
       slot.page = page;
       slot.needsNewChat = true;
+      if (!this.browser.isCdp && !old.isClosed()) {
+        await old.close().catch(() => undefined);
+      }
     } catch (err) {
       logger.error({ err }, 'Failed to open replacement page; relaunching browser');
-      if (!this.browser.isCdp) {
-        for (const s of this.slots.values()) {
-          await s.page.close().catch(() => undefined);
-        }
-      }
       this.slots.clear();
       await this.browser.relaunch();
       const page = await this.browser.newPage();

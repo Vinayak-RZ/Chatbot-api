@@ -86,10 +86,20 @@ npm run dev     # http://127.0.0.1:8787
 
 ### 3. Send a prompt
 
+With the API running, use the try client (reads your local `.env` key; never prints it):
+
+```powershell
+npm run try                 # interactive REPL
+npm run try -- "hello"      # one-shot
+npm run try:ui              # browser UI at http://127.0.0.1:8790
+```
+
+Or curl:
+
 ```powershell
 curl -X POST http://127.0.0.1:8787/chat/send `
   -H "content-type: application/json" `
-  -H "x-api-key: dev-key-change-me" `
+  -H "x-api-key: YOUR_KEY_FROM_ENV" `
   -d "{\"prompt\":\"hello\"}"
 ```
 

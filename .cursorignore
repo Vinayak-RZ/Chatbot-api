@@ -1,0 +1,12 @@
+﻿# Secrets — never index or expose to the agent
+.env
+.env.*
+!.env.example
+
+# Session / browser profile / error dumps
+data/
+artifacts/
+*.pem
+*.key
+credentials*.json
+storage-state.json

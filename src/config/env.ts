@@ -1,6 +1,32 @@
 import { z } from 'zod';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config as loadDotenv } from 'dotenv';
+import { logger } from '../logger.js';
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const localEnvPath = path.join(projectRoot, '.env');
+
+/**
+ * Load secrets/config from the operator's local `.env` only.
+ * Never reads `.env.example`. Does not override vars already set in the shell.
+ */
+function loadLocalEnv(): void {
+  if (!existsSync(localEnvPath)) {
+    throw new Error(
+      `Missing local .env at ${localEnvPath}. Copy .env.example to .env and edit values yourself — this app will not use .env.example.`,
+    );
+  }
+  const result = loadDotenv({ path: localEnvPath, override: false, quiet: true });
+  if (result.error) {
+    throw new Error(`Failed to load local .env: ${result.error.message}`);
+  }
+  const keyCount = result.parsed ? Object.keys(result.parsed).length : 0;
+  logger.info({ path: '.env', keys: keyCount }, 'Loaded local env file');
+}
+
+loadLocalEnv();
 
 const boolFromEnv = z
   .string()
@@ -26,7 +52,8 @@ const envSchema = z
     RATE_LIMIT_RPM: z.coerce.number().int().min(1).max(20).default(10),
     QUEUE_MAX: z.coerce.number().int().min(1).max(100).default(8),
     MAX_PROMPT_CHARS: z.coerce.number().int().min(1).default(8000),
-    CHATBOT_URL: z.string().url().default('http://127.0.0.1:4173'),
+    // Must come from local .env (or the process env) — no baked-in placeholder URL.
+    CHATBOT_URL: z.string().url(),
     MOCK_PORT: z.coerce.number().int().positive().default(4173),
     HEADLESS: boolFromEnv,
     USER_DATA_DIR: z.string().default('./data/browser-profile'),
@@ -41,7 +68,7 @@ const envSchema = z
     BROWSER_CHANNEL: z.string().optional(),
     /** Attach to an existing Chrome/Edge via CDP, e.g. http://127.0.0.1:9222 */
     CDP_URL: z.string().url().optional(),
-    /** When using CDP, reuse an open tab on CHATBOT_URL instead of always opening a new one */
+    /** When using CDP, reuse an open tab on the Chatbot URL instead of always opening a new one */
     CDP_REUSE_TABS: boolFromEnv,
   })
   .superRefine((data, ctx) => {

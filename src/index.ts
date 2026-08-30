@@ -18,7 +18,6 @@ async function main() {
         port: config.port,
         maxPages: config.maxPages,
         cdp: Boolean(config.cdpUrl),
-        chatbotUrl: config.chatbotUrl,
         headless: config.headless,
       },
       'API listening',

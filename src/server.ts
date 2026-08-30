@@ -20,7 +20,7 @@ export function createApp(config: AppConfig, pool: PagePool) {
       pagesBound: h.pagesBound,
       maxPages: h.maxPages,
       cdp: Boolean(config.cdpUrl),
-      chatbotUrl: config.chatbotUrl,
+      chatbotConfigured: true,
     });
   });
 
