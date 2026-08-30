@@ -11,9 +11,17 @@ const localEnvPath = path.join(projectRoot, '.env');
 /**
  * Load secrets/config from the operator's local `.env` only.
  * Never reads `.env.example`. Does not override vars already set in the shell.
+ * Missing `.env` is OK in CI/tests (process env / loadConfig args supply values).
  */
 function loadLocalEnv(): void {
   if (!existsSync(localEnvPath)) {
+    const allowMissing =
+      process.env.CI === 'true' ||
+      process.env.VITEST === 'true' ||
+      process.env.SKIP_DOTENV === '1';
+    if (allowMissing) {
+      return;
+    }
     throw new Error(
       `Missing local .env at ${localEnvPath}. Copy .env.example to .env and edit values yourself — this app will not use .env.example.`,
     );

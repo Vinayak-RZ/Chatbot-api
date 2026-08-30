@@ -8,5 +8,9 @@ export default defineConfig({
     hookTimeout: 120_000,
     fileParallelism: false,
     pool: 'forks',
+    env: {
+      // Allow importing src/config/env without a checked-in .env (CI / clean clones).
+      SKIP_DOTENV: '1',
+    },
   },
 });
