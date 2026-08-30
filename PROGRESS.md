@@ -4,33 +4,32 @@ Live status for [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md).
 
 | Field | Value |
 |-------|-------|
-| **Current phase** | 0 — documentation |
-| **Branch** | `main` (docs only) |
-| **Next gate** | Owner approves Phase A |
-| **Application code** | none (by design) |
+| **Current phase** | A–G complete; H blocked |
+| **Branch** | `feat/v1-bridge` |
+| **Next gate** | Owner URL + storageState for Phase H |
+| **Application code** | present; 26 tests green; validate.ps1 OK |
 
 ## Phase status
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 0 Docs | **complete** (this commit) | PRD, PID, DOM contract, shipping artifacts, ADRs |
-| A Scaffold | not started | blocked on approval |
-| B Mock | not started | |
-| C Browser | not started | |
-| D Chat | not started | |
-| E HTTP | not started | |
-| F Tests | not started | |
-| G Hardening | not started | |
-| H Cutover | blocked | need owned URL + storageState |
+| 0 Docs | **complete** | on `main` |
+| A Scaffold | **complete** | |
+| B Mock | **complete** | dark ChatGPT-shell |
+| C Browser | **complete** | page pool |
+| D Chat | **complete** | hybrid wait / artifacts |
+| E HTTP | **complete** | allowlist + 10 rpm |
+| F Tests | **complete** | 26 tests |
+| G Hardening | **complete** | security review clean P0; validate OK |
+| H Cutover | **blocked** | see `docs/CUTOVER.md` |
 
 ## Session log
 
 | Date | Event |
 |------|--------|
-| 2026-08-30 | Ingested original build prompt; wrote spec v1.1 |
-| 2026-08-30 | Owner: owns ChatGPT-like UI; session file; New chat button; 3–5s; HEADLESS both; partial+flag; nawab PID; docs-only |
-| 2026-08-30 | Phase 0 documentation set written and committed |
+| 2026-08-30 | Phase 0 on `main` |
+| 2026-08-30 | Final plan executed on `feat/v1-bridge` (harden, QA, commit matrix, validate) |
 
 ## Cutover
 
-Not started. Checklist lives in IMPLEMENTATION_PLAN §15.
+Blocked. Checklist: [`docs/CUTOVER.md`](./docs/CUTOVER.md).

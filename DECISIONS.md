@@ -15,6 +15,9 @@ Architecture decision records. Newest first in the index.
 | ADR-009 | ProseMirror-safe insert; mock gates Send on `input` | accepted |
 | ADR-010 | Nawab PID instead of Spec Kit | accepted |
 | ADR-011 | Phase 0 is docs-only | accepted |
+| ADR-012 | Rate limit 10 rpm per API key | accepted |
+| ADR-013 | Playwright optimization playbook is normative | accepted |
+| ADR-014 | One page per API key (max 3); first-use New chat | accepted |
 
 ---
 
@@ -46,8 +49,8 @@ Architecture decision records. Newest first in the index.
 
 ## ADR-005 — New chat button
 
-**Context:** Owner: New chat is a button.  
-**Choice:** `button[data-testid="new-chat-button"]`. No `NEW_CHAT_URL` as primary.
+**Context:** Owner: New chat is a button/control, not a URL. Dump uses an `<a>`.  
+**Choice:** Canonical `a[data-testid="create-new-chat-button"]` (fallback accessible name `/new chat/i`). No `NEW_CHAT_URL` as primary.
 
 ## ADR-006 — Short generation timeout
 
@@ -80,4 +83,23 @@ Architecture decision records. Newest first in the index.
 ## ADR-011 — Docs-only until Phase A approval
 
 **Context:** User: this work is product documentation only.  
-**Choice:** Phase 0 commit contains no `src/`. Implementation starts when they approve Phase A.
+**Choice:** Phase 0 commit contains no `src/`. Implementation starts when they approve Phase A.  
+**Superseded for execution:** Phase A+ approved; code lands on `feat/v1-bridge`.
+
+## ADR-012 — Rate limit 10 rpm per API key
+
+**Context:** Owner wants ~10–20 requests/minute protection against spam.  
+**Choice:** `express-rate-limit`, window 60s, default `RATE_LIMIT_RPM=10`, cap 20, keyed by `x-api-key`. Distinct from `QUEUE_FULL`.  
+**Rejected:** Global process-wide RPM only; relying solely on the queue.
+
+## ADR-013 — Playwright playbook is normative
+
+**Context:** Flaky waits and naive innerHTML inserts are the main failure modes.  
+**Choice:** Hybrid wait, ProseMirror insert path, no `networkidle`, traces on failure only — documented in IMPLEMENTATION_PLAN §8.  
+**Rejected:** Treating wait strategy as optional polish.
+
+## ADR-014 — One page per API key (max 3)
+
+**Context:** Multiple API keys must not share conversation context; default should stay light.  
+**Choice:** `MAX_PAGES` 1–3 (default 1); allowlist 1–3 keys; `Map<apiKey, {page, queue}>`; first use of a key always clicks New chat; same key continues on `/chat/send`; `/chat/new` scoped to that key’s page.  
+**Rejected:** One shared page for all keys; opening a new page per HTTP request; more than 3 pages.
