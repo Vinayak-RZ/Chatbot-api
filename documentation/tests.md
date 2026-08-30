@@ -1,36 +1,26 @@
 # Tests — verification map
 
-Honest map: **no application tests exist yet** (documentation-only phase). Everything below is **proposed** until Phase A+ lands code.
-
 ## Existing coverage
 
-| Use case | Rule | Expected | Evidence | Status |
-|----------|------|----------|----------|--------|
-| — | — | — | Repo has no `src/` or `tests/` | **none** |
+| Use case | Evidence | Status |
+|----------|----------|--------|
+| Env boot (keys vs pages, chatgpt.com) | `tests/env.test.ts` | pass |
+| Auth / validation / oversize / rate limit / queue | `tests/api.test.ts` | pass |
+| Mock input-gating | `tests/mock-input.test.ts` | pass |
+| Page pool bind / first-use New chat / QUEUE_FULL | `tests/page-pool.test.ts` | pass |
+| E2E send, continue, new-chat clear, isolation, parallel | `tests/e2e.test.ts` | pass |
+| E2E 5s stream, timeout partial, dummy SELECTOR_NOT_FOUND | `tests/e2e.test.ts` | pass |
 
-CI-required: not defined until `package.json` exists.
+CI: `.github/workflows/ci.yml` — `npm test` on Windows with mock.
 
-## Proposed tests (implementation)
+## QA gate
 
-| Use case | Rule | Expected (incl. deny) | Type | Pins |
-|----------|------|------------------------|------|------|
-| Health | Open, no secrets | 200; no `API_KEY` in body | automated API | F4 |
-| Send without key | Authz | 401 `UNAUTHORIZED` | automated API | permissions |
-| Wrong key | Authz | 401 | automated API | permissions |
-| Empty / huge prompt | Validation | 400 `VALIDATION_ERROR` | automated API | variables |
-| Send on mock | Assistant ≠ user echo | 200 `partial: false` | E2E Playwright + mock | F1, DOM contract |
-| New chat | Button clears thread | 200, history reset | E2E | F2 |
-| 3s stream | Completes in budget | 200, full canned text | E2E `delayMs=3000` | KR3 |
-| 5s stream | Completes in 12s budget | 200 | E2E `delayMs=5000` | KR3 |
-| Over-budget stream | Partial flagged | 504, `partial: true`, `response` non-empty | E2E `delayMs=20000` | F3 |
-| Queue overflow | Cap | 429 `QUEUE_FULL` | API + delayed mock | §6 queue |
-| Missing composer | Selectors | 502 `SELECTOR_NOT_FOUND`, process up | E2E dummy page | recover |
-| Contenteditable insert | Send enables only on input | Naive innerHTML does not send; automation path does | mock unit + E2E | A4 |
-| Crash | Relaunch | Next request works or 503 then recover | E2E | F6 |
-| Session file | Boot chat-ready | Mock login → storageState → headed/headless both | E2E | F5 |
+```powershell
+npm run typecheck
+npm run smoke
+npm test
+.\scripts\validate.ps1
+```
 
-## Gaps (until proposed tests are written)
-
-Every PRD rule is unverified. Highest exposure: sending the user echo as `response`; empty ProseMirror send; timeout without `partial: true`.
-
-**After code exists:** this file must be rewritten so “Existing coverage” lists real test names. Do not leave proposed rows marked as green.
+Headed smoke: `$env:HEADLESS='false'; npm run smoke`
+Mint session against mock: `npm run login` (mock must be up)
