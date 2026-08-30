@@ -12,7 +12,17 @@ async function main() {
 
   const app = createApp(config, pool);
   const server = app.listen(config.port, config.host, () => {
-    logger.info({ host: config.host, port: config.port, maxPages: config.maxPages }, 'API listening');
+    logger.info(
+      {
+        host: config.host,
+        port: config.port,
+        maxPages: config.maxPages,
+        cdp: Boolean(config.cdpUrl),
+        chatbotUrl: config.chatbotUrl,
+        headless: config.headless,
+      },
+      'API listening',
+    );
   });
 
   const shutdown = async (signal: string) => {

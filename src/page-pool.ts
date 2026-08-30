@@ -30,8 +30,10 @@ export class PagePool {
   }
 
   async stop(): Promise<void> {
-    for (const slot of this.slots.values()) {
-      await slot.page.close().catch(() => undefined);
+    if (!this.browser.isCdp) {
+      for (const slot of this.slots.values()) {
+        await slot.page.close().catch(() => undefined);
+      }
     }
     this.slots.clear();
     await this.browser.close();
@@ -162,16 +164,19 @@ export class PagePool {
   }
 
   private async replacePage(slot: Slot): Promise<void> {
-    await slot.page.close().catch(() => undefined);
+    if (!this.browser.isCdp) {
+      await slot.page.close().catch(() => undefined);
+    }
     try {
       const page = await this.browser.newPage();
       slot.page = page;
       slot.needsNewChat = true;
     } catch (err) {
       logger.error({ err }, 'Failed to open replacement page; relaunching browser');
-      // Drop all slots — pages belong to old context
-      for (const s of this.slots.values()) {
-        await s.page.close().catch(() => undefined);
+      if (!this.browser.isCdp) {
+        for (const s of this.slots.values()) {
+          await s.page.close().catch(() => undefined);
+        }
       }
       this.slots.clear();
       await this.browser.relaunch();

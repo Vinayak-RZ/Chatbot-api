@@ -39,6 +39,10 @@ const envSchema = z
     LOG_PROMPTS: boolFromEnv,
     ARTIFACTS_ON_ERROR: boolFromEnv,
     BROWSER_CHANNEL: z.string().optional(),
+    /** Attach to an existing Chrome/Edge via CDP, e.g. http://127.0.0.1:9222 */
+    CDP_URL: z.string().url().optional(),
+    /** When using CDP, reuse an open tab on CHATBOT_URL instead of always opening a new one */
+    CDP_REUSE_TABS: boolFromEnv,
   })
   .superRefine((data, ctx) => {
     const fromList = data.API_KEYS
@@ -136,6 +140,8 @@ const envSchema = z
       logPrompts: data.LOG_PROMPTS ?? false,
       artifactsOnError: data.ARTIFACTS_ON_ERROR ?? true,
       browserChannel: data.BROWSER_CHANNEL,
+      cdpUrl: data.CDP_URL,
+      cdpReuseTabs: data.CDP_REUSE_TABS ?? true,
     };
   });
 
