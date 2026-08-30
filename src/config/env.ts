@@ -52,8 +52,8 @@ const envSchema = z
     RATE_LIMIT_RPM: z.coerce.number().int().min(1).max(20).default(10),
     QUEUE_MAX: z.coerce.number().int().min(1).max(100).default(8),
     MAX_PROMPT_CHARS: z.coerce.number().int().min(1).default(8000),
-    // Must come from local .env (or the process env) — no baked-in placeholder URL.
-    CHATBOT_URL: z.string().url(),
+    // Operator-supplied target; no format or host checks at boot.
+    CHATBOT_URL: z.string().min(1),
     MOCK_PORT: z.coerce.number().int().positive().default(4173),
     HEADLESS: boolFromEnv,
     USER_DATA_DIR: z.string().default('./data/browser-profile'),
@@ -111,25 +111,6 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         message: `API_KEYS length (${keys.length}) must be <= MAX_PAGES (${data.MAX_PAGES})`,
         path: ['MAX_PAGES'],
-      });
-    }
-
-    let hostname: string;
-    try {
-      hostname = new URL(data.CHATBOT_URL).hostname.toLowerCase();
-    } catch {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'CHATBOT_URL is not a valid URL',
-        path: ['CHATBOT_URL'],
-      });
-      return;
-    }
-    if (hostname === 'chatgpt.com' || hostname.endsWith('.chatgpt.com')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'CHATBOT_URL must not be chatgpt.com',
-        path: ['CHATBOT_URL'],
       });
     }
   })

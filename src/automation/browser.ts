@@ -199,17 +199,24 @@ export class BrowserManager {
   }
 
   private async findReusablePage(ctx: BrowserContext): Promise<Page | null> {
-    const target = new URL(this.config.chatbotUrl);
+    let targetOrigin: string | null = null;
+    try {
+      targetOrigin = new URL(this.config.chatbotUrl).origin;
+    } catch {
+      /* Chatbot URL may be any string — skip origin matching */
+    }
     const pages = ctx.pages().filter((p) => !p.isClosed());
 
-    for (const page of pages) {
-      try {
-        const u = new URL(page.url());
-        if (u.origin === target.origin) {
-          return page;
+    if (targetOrigin) {
+      for (const page of pages) {
+        try {
+          const u = new URL(page.url());
+          if (u.origin === targetOrigin) {
+            return page;
+          }
+        } catch {
+          /* ignore invalid urls */
         }
-      } catch {
-        /* ignore invalid urls */
       }
     }
 
