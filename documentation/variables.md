@@ -11,6 +11,8 @@ All server-side. Nothing is bundled into a public client.
 | `STORAGE_STATE_PATH` | Playwright | disk | owner JSON | re-export | **High** |
 | `USER_DATA_DIR` | Playwright profile | disk | local path | delete = new profile | **High** |
 | `CHATBOT_URL` | browser | server | `.env` | n/a | Med — not chatgpt.com |
+| `CDP_URL` | Playwright attach | server | `.env` | n/a | Med — attach to debug Chrome |
+| `CDP_REUSE_TABS` | page pool | server | `.env` | n/a | Low — default true |
 | `HEADLESS` | Playwright | server | `.env` | n/a | Low |
 | `HOST` / `PORT` | Express | server | `.env` | n/a | Med if `0.0.0.0` |
 | `QUEUE_MAX` | per-page queue | server | `.env` | n/a | Low |
@@ -30,7 +32,8 @@ All server-side. Nothing is bundled into a public client.
 - `HOST=127.0.0.1`, `PORT=8787`
 - `MAX_PAGES=1`
 - `RATE_LIMIT_RPM=10`
-- `HEADLESS=false` during build
+- `HEADLESS=false` by default (visible Chromium window); set `true` for CI/servers
+- Optional `CDP_URL=http://127.0.0.1:9222` to attach to Chrome from `scripts/chrome-debug.ps1`
 - `GENERATION_TIMEOUT_MS=12000`
 - `FIRST_TOKEN_TIMEOUT_MS=8000`
 - `LOG_PROMPTS=false`

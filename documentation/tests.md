@@ -22,5 +22,6 @@ npm test
 .\scripts\validate.ps1
 ```
 
-Headed smoke: `$env:HEADLESS='false'; npm run smoke`
+Headed smoke (default): `npm run smoke`  
+Headless smoke: `$env:HEADLESS='true'; npm run smoke`
 Mint session against mock: `npm run login` (mock must be up)

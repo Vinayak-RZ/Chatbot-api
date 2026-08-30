@@ -31,10 +31,9 @@ describe('loadConfig', () => {
     ).toThrow(/At most 3/);
   });
 
-  it('rejects chatgpt.com', () => {
-    expect(() =>
-      loadConfig({ ...base, CHATBOT_URL: 'https://chatgpt.com/' }),
-    ).toThrow(/chatgpt\.com/);
+  it('accepts any Chatbot URL string without host checks', () => {
+    const cfg = loadConfig({ ...base, CHATBOT_URL: 'https://chatgpt.com/' });
+    expect(cfg.chatbotUrl).toBe('https://chatgpt.com/');
   });
 
   it('rejects non-loopback HOST', () => {

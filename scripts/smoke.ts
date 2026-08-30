@@ -1,12 +1,14 @@
 /**
  * Quick smoke: open chatbot URL, assert composer visible.
- * Usage: MOCK running; CHATBOT_URL set; npm run smoke
- * Set HEADLESS=false for a headed window.
+ * Usage: npm run smoke
+ * Default is a visible browser window. Set HEADLESS=true to hide it.
  */
 import { chromium } from 'playwright';
 
 const url = process.env.CHATBOT_URL || 'http://127.0.0.1:4173';
-const headless = process.env.HEADLESS !== 'false';
+const headless = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.HEADLESS ?? 'false').toLowerCase(),
+);
 
 async function main() {
   const browser = await chromium.launch({ headless });

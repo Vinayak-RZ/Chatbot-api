@@ -46,7 +46,7 @@ Many “chatbot APIs” assume you have a model endpoint. Sometimes you only hav
 - **Per-key page pool.** Up to three API keys; each key gets its own Playwright page and `p-queue` (`MAX_PAGES` 1–3). First use always clicks **New chat**; later sends on the same key continue the thread. Different keys never share a conversation.
 - **Hybrid wait.** After submit, wait for first token (stop button / new assistant node), then poll until text is stable — not `networkidle`, not a blind sleep. Over budget → stop → scrape → HTTP 504 with `partial: true`.
 - **ProseMirror-safe insert.** Fill / `insertText` / paste path; the mock only enables Send after a real `input` event so naive `innerHTML` cannot “fake” a send.
-- **Loopback-first ops.** Binds `127.0.0.1` by default; rejects `chatgpt.com` as `CHATBOT_URL`; rate-limits ~10 rpm per key.
+- **Loopback-first ops.** Binds `127.0.0.1` by default; rate-limits ~10 rpm per key.
 
 ## The idea
 
@@ -86,10 +86,20 @@ npm run dev     # http://127.0.0.1:8787
 
 ### 3. Send a prompt
 
+With the API running, use the try client (reads your local `.env` key; never prints it):
+
+```powershell
+npm run try                 # interactive REPL
+npm run try -- "hello"      # one-shot
+npm run try:ui              # browser UI at http://127.0.0.1:8790
+```
+
+Or curl:
+
 ```powershell
 curl -X POST http://127.0.0.1:8787/chat/send `
   -H "content-type: application/json" `
-  -H "x-api-key: dev-key-change-me" `
+  -H "x-api-key: YOUR_KEY_FROM_ENV" `
   -d "{\"prompt\":\"hello\"}"
 ```
 

@@ -1,6 +1,40 @@
 import { z } from 'zod';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config as loadDotenv } from 'dotenv';
+import { logger } from '../logger.js';
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const localEnvPath = path.join(projectRoot, '.env');
+
+/**
+ * Load secrets/config from the operator's local `.env` only.
+ * Never reads `.env.example`. Does not override vars already set in the shell.
+ * Missing `.env` is OK in CI/tests (process env / loadConfig args supply values).
+ */
+function loadLocalEnv(): void {
+  if (!existsSync(localEnvPath)) {
+    const allowMissing =
+      process.env.CI === 'true' ||
+      process.env.VITEST === 'true' ||
+      process.env.SKIP_DOTENV === '1';
+    if (allowMissing) {
+      return;
+    }
+    throw new Error(
+      `Missing local .env at ${localEnvPath}. Copy .env.example to .env and edit values yourself — this app will not use .env.example.`,
+    );
+  }
+  const result = loadDotenv({ path: localEnvPath, override: false, quiet: true });
+  if (result.error) {
+    throw new Error(`Failed to load local .env: ${result.error.message}`);
+  }
+  const keyCount = result.parsed ? Object.keys(result.parsed).length : 0;
+  logger.info({ path: '.env', keys: keyCount }, 'Loaded local env file');
+}
+
+loadLocalEnv();
 
 const boolFromEnv = z
   .string()
@@ -26,7 +60,8 @@ const envSchema = z
     RATE_LIMIT_RPM: z.coerce.number().int().min(1).max(20).default(10),
     QUEUE_MAX: z.coerce.number().int().min(1).max(100).default(8),
     MAX_PROMPT_CHARS: z.coerce.number().int().min(1).default(8000),
-    CHATBOT_URL: z.string().url().default('http://127.0.0.1:4173'),
+    // Operator-supplied target; no format or host checks at boot.
+    CHATBOT_URL: z.string().min(1),
     MOCK_PORT: z.coerce.number().int().positive().default(4173),
     HEADLESS: boolFromEnv,
     USER_DATA_DIR: z.string().default('./data/browser-profile'),
@@ -39,6 +74,10 @@ const envSchema = z
     LOG_PROMPTS: boolFromEnv,
     ARTIFACTS_ON_ERROR: boolFromEnv,
     BROWSER_CHANNEL: z.string().optional(),
+    /** Attach to an existing Chrome/Edge via CDP, e.g. http://127.0.0.1:9222 */
+    CDP_URL: z.string().url().optional(),
+    /** When using CDP, reuse an open tab on the Chatbot URL instead of always opening a new one */
+    CDP_REUSE_TABS: boolFromEnv,
   })
   .superRefine((data, ctx) => {
     const fromList = data.API_KEYS
@@ -82,25 +121,6 @@ const envSchema = z
         path: ['MAX_PAGES'],
       });
     }
-
-    let hostname: string;
-    try {
-      hostname = new URL(data.CHATBOT_URL).hostname.toLowerCase();
-    } catch {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'CHATBOT_URL is not a valid URL',
-        path: ['CHATBOT_URL'],
-      });
-      return;
-    }
-    if (hostname === 'chatgpt.com' || hostname.endsWith('.chatgpt.com')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'CHATBOT_URL must not be chatgpt.com',
-        path: ['CHATBOT_URL'],
-      });
-    }
   })
   .transform((data) => {
     const fromList = data.API_KEYS
@@ -136,6 +156,8 @@ const envSchema = z
       logPrompts: data.LOG_PROMPTS ?? false,
       artifactsOnError: data.ARTIFACTS_ON_ERROR ?? true,
       browserChannel: data.BROWSER_CHANNEL,
+      cdpUrl: data.CDP_URL,
+      cdpReuseTabs: data.CDP_REUSE_TABS ?? true,
     };
   });
 
