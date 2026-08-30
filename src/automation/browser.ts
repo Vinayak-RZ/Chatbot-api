@@ -37,7 +37,19 @@ export class BrowserManager {
   async preparePage(page: Page): Promise<void> {
     page.setDefaultTimeout(10_000);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
-    await page.goto(this.config.chatbotUrl, { waitUntil: 'domcontentloaded' });
+    try {
+      await page.goto(this.config.chatbotUrl, { waitUntil: 'domcontentloaded' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/ERR_CONNECTION_REFUSED|ECONNREFUSED|net::ERR_/i.test(msg)) {
+        throw new AppError(
+          'BROWSER_UNAVAILABLE',
+          `Cannot reach CHATBOT_URL (${this.config.chatbotUrl}): ${msg}`,
+          503,
+        );
+      }
+      throw err;
+    }
     try {
       await page
         .locator('#prompt-textarea')
