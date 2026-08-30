@@ -36,4 +36,8 @@ describe('loadConfig', () => {
       loadConfig({ ...base, CHATBOT_URL: 'https://chatgpt.com/' }),
     ).toThrow(/chatgpt\.com/);
   });
+
+  it('rejects non-loopback HOST', () => {
+    expect(() => loadConfig({ ...base, HOST: '0.0.0.0' })).toThrow(/loopback/);
+  });
 });

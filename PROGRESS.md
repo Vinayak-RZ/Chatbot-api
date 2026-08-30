@@ -4,33 +4,32 @@ Live status for [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md).
 
 | Field | Value |
 |-------|-------|
-| **Current phase** | Final execution A–G on `feat/v1-bridge` |
+| **Current phase** | A–G complete; H blocked |
 | **Branch** | `feat/v1-bridge` |
-| **Next gate** | Commit matrix + validate.ps1; Phase H blocked |
-| **Application code** | present |
+| **Next gate** | Owner URL + storageState for Phase H |
+| **Application code** | present; 26 tests green; validate.ps1 OK |
 
 ## Phase status
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 0 Docs | **complete** | on `main` |
-| A Scaffold | **complete** | harden in final pass |
-| B Mock | **complete** | dark ChatGPT-shell UI |
-| C Browser | **complete** | persistent + page pool |
-| D Chat | **complete** | insert / hybrid wait / recover |
-| E HTTP | **complete** | allowlist, queues, 10 rpm |
-| F Tests | **in progress** | expand QA gaps |
-| G Hardening | **in progress** | security + validate |
-| H Cutover | **blocked** | need owned URL + storageState |
+| A Scaffold | **complete** | |
+| B Mock | **complete** | dark ChatGPT-shell |
+| C Browser | **complete** | page pool |
+| D Chat | **complete** | hybrid wait / artifacts |
+| E HTTP | **complete** | allowlist + 10 rpm |
+| F Tests | **complete** | 26 tests |
+| G Hardening | **complete** | security review clean P0; validate OK |
+| H Cutover | **blocked** | see `docs/CUTOVER.md` |
 
 ## Session log
 
 | Date | Event |
 |------|--------|
-| 2026-08-30 | Phase 0 documentation on `main` |
-| 2026-08-30 | Phase A+ implementation on `feat/v1-bridge` |
-| 2026-08-30 | Final merged plan: harden + QA + commit matrix |
+| 2026-08-30 | Phase 0 on `main` |
+| 2026-08-30 | Final plan executed on `feat/v1-bridge` (harden, QA, commit matrix, validate) |
 
 ## Cutover
 
-Not started. Requires owner `CHATBOT_URL` + `STORAGE_STATE_PATH`.
+Blocked. Checklist: [`docs/CUTOVER.md`](./docs/CUTOVER.md).

@@ -150,7 +150,12 @@ export class BrowserManager {
 }
 
 export function artifactsDir(requestId: string): string {
-  const dir = path.resolve('artifacts', requestId);
+  const safe = requestId.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 80) || 'unknown';
+  const dir = path.resolve('artifacts', safe);
+  const root = path.resolve('artifacts');
+  if (!dir.startsWith(root + path.sep) && dir !== root) {
+    throw new AppError('VALIDATION_ERROR', 'Invalid requestId for artifacts', 400);
+  }
   mkdirSync(dir, { recursive: true });
   return dir;
 }

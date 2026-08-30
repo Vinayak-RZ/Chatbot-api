@@ -12,7 +12,13 @@ const boolFromEnv = z
 
 const envSchema = z
   .object({
-    HOST: z.string().default('127.0.0.1'),
+    HOST: z
+      .string()
+      .default('127.0.0.1')
+      .refine(
+        (h) => h === '127.0.0.1' || h === 'localhost' || h === '::1',
+        'HOST must be loopback (127.0.0.1, localhost, or ::1)',
+      ),
     PORT: z.coerce.number().int().positive().default(8787),
     API_KEY: z.string().optional(),
     API_KEYS: z.string().optional(),
