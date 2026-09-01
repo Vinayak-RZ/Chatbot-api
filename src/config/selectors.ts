@@ -10,6 +10,9 @@ export const SELECTORS = {
   assistantMessage: '[data-message-author-role="assistant"]',
   userMessage: '[data-message-author-role="user"]',
   assistantBody: '[data-message-author-role="assistant"] .markdown.prose',
+  /** Present on finished assistant turns in ChatGPT-like UIs (copy / dislike / share row). */
+  copyTurn: 'button[data-testid="copy-turn-action-button"]',
+  conversationTurn: 'article[data-testid^="conversation-turn"]',
   thread: '#thread',
   main: 'main#main',
 } as const;

@@ -4,7 +4,7 @@ Intended-state map for reviewers. Implementation lives under `src/` on `feat/v1-
 
 ## Product overview
 
-A localhost REST service drives one Playwright **persistent context** with a **per-API-key page pool** (`MAX_PAGES` 1–3) against a ChatGPT-like web UI. Default UI is the local dark mock ([`scripts/mock-chatbot/`](../scripts/mock-chatbot/)). Cutover points `CHATBOT_URL` at an owned clone and loads owner-supplied `storageState`. See [`docs/CUTOVER.md`](../docs/CUTOVER.md).
+A localhost REST service drives a ChatGPT-like web UI with a **per-API-key page pool** (`MAX_PAGES` 1–3). Operator default is **attach** to a pre-opened Chrome/Edge (`BROWSER_MODE=attach`, one designated tab, no inspection of other tabs). Tests/CI **launch** a throwaway persistent Chromium against the local dark mock ([`scripts/mock-chatbot/`](../scripts/mock-chatbot/)). See [`docs/CUTOVER.md`](../docs/CUTOVER.md).
 
 ## Stack (locked)
 
@@ -12,7 +12,7 @@ A localhost REST service drives one Playwright **persistent context** with a **p
 |-------|--------|
 | Runtime | Node 20+, TypeScript |
 | HTTP | Express, `127.0.0.1:8787` |
-| Browser | Playwright `launchPersistentContext` |
+| Browser | Playwright attach (`connectOverCDP`) or `launchPersistentContext` |
 | Queue | `p-queue` concurrency 1 **per page/key** |
 | Rate limit | `express-rate-limit` 10 rpm/key (cap 20) |
 | Validation | zod (env + bodies) |
@@ -34,7 +34,7 @@ A localhost REST service drives one Playwright **persistent context** with a **p
                                               v
                                     [chat automation]
                                               v
-                                    [persistent context]
+                         [attached Chrome tab | persistent context]
                                               v
                               [Mock ChatGPT UI | owned clone]
 ```
@@ -46,4 +46,5 @@ Key modules: `src/server.ts`, `src/page-pool.ts`, `src/automation/browser.ts`, `
 - Bind loopback only.
 - Allowlist API keys (1–3); timing-safe compare.
 - Isolation is **thread-level** (separate pages + New chat), not separate accounts (cookies shared in one profile).
+- Attach mode binds **one designated tab** (focused, or opted-in `CHATBOT_URL`). Other tabs are not logged or scanned.
 - Never default `CHATBOT_URL` to chatgpt.com.

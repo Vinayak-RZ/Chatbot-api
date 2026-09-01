@@ -1,5 +1,10 @@
-# Launch Chrome with remote debugging so Chatbot-api can attach (CDP).
-# Close ALL Chrome windows first, then run this script, then open your chatbot and log in.
+# Optional fallback: launch Chrome/Edge with --remote-debugging-port so Chatbot-api can attach.
+# Preferred path (Chrome 144+): leave this unused. Open your existing browser, enable
+# remote debugging at chrome://inspect/#remote-debugging, set BROWSER_MODE=attach and
+# CDP_URL=chrome in .env. See docs/CUTOVER.md.
+#
+# Use this script for older Chrome, or a dedicated empty profile (no personal tabs).
+# Close ALL Chrome windows first if you reuse the default profile.
 #
 # Usage:
 #   .\scripts\chrome-debug.ps1
@@ -55,10 +60,11 @@ Write-Host "Starting: $chrome"
 Write-Host "Debug URL: http://127.0.0.1:$Port"
 Write-Host "Profile:   $UserDataDir"
 Write-Host "Then set in .env:"
+Write-Host "  BROWSER_MODE=attach"
 Write-Host "  CDP_URL=http://127.0.0.1:$Port"
-Write-Host "  CHATBOT_URL=<your chatbot link>"
+Write-Host "  CDP_ATTACH_TAB=focused"
 Write-Host "  HEADLESS=false"
 Write-Host ""
-Write-Host "Log in in that window, leave the chatbot tab open, then: npm run dev"
+Write-Host "Focus the chatbot tab, then: npm run dev"
 
 Start-Process -FilePath $chrome -ArgumentList $args
