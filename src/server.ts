@@ -19,8 +19,8 @@ export function createApp(config: AppConfig, pool: PagePool) {
       status: 'up',
       pagesBound: h.pagesBound,
       maxPages: h.maxPages,
-      cdp: Boolean(config.cdpUrl),
-      chatbotConfigured: true,
+      cdp: config.isAttach,
+      chatbotConfigured: Boolean(config.chatbotUrl),
     });
   });
 

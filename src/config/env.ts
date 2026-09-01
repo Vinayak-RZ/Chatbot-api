@@ -4,6 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
 import { logger } from '../logger.js';
+import { isCdpEndpoint } from './cdp-channels.js';
+
+export { CDP_CHANNELS, isCdpChannel, isCdpEndpoint } from './cdp-channels.js';
+export type { CdpChannel } from './cdp-channels.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const localEnvPath = path.join(projectRoot, '.env');
@@ -44,6 +48,15 @@ const boolFromEnv = z
     return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
   });
 
+const emptyToUndef = z
+  .string()
+  .optional()
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    const t = v.trim();
+    return t === '' ? undefined : t;
+  });
+
 const envSchema = z
   .object({
     HOST: z
@@ -60,23 +73,25 @@ const envSchema = z
     RATE_LIMIT_RPM: z.coerce.number().int().min(1).max(20).default(10),
     QUEUE_MAX: z.coerce.number().int().min(1).max(100).default(8),
     MAX_PROMPT_CHARS: z.coerce.number().int().min(1).default(8000),
-    // Operator-supplied target; no format or host checks at boot.
-    CHATBOT_URL: z.string().min(1),
+    CHATBOT_URL: emptyToUndef,
     MOCK_PORT: z.coerce.number().int().positive().default(4173),
     HEADLESS: boolFromEnv,
     USER_DATA_DIR: z.string().default('./data/browser-profile'),
     STORAGE_STATE_PATH: z.string().default('./data/storage-state.json'),
-    FIRST_TOKEN_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
-    GENERATION_TIMEOUT_MS: z.coerce.number().int().positive().default(12000),
+    FIRST_TOKEN_TIMEOUT_MS: z.coerce.number().int().min(0).default(8000),
+    GENERATION_TIMEOUT_MS: z.coerce.number().int().min(0).default(12000),
     SUBMIT_ACK_MS: z.coerce.number().int().positive().default(5000),
     NAVIGATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
     SUBMIT_STRATEGY: z.enum(['click', 'auto']).default('auto'),
     LOG_PROMPTS: boolFromEnv,
     ARTIFACTS_ON_ERROR: boolFromEnv,
     BROWSER_CHANNEL: z.string().optional(),
-    /** Attach to an existing Chrome/Edge via CDP, e.g. http://127.0.0.1:9222 */
-    CDP_URL: z.string().url().optional(),
-    /** When using CDP, reuse an open tab on the Chatbot URL instead of always opening a new one */
+    BROWSER_MODE: z.enum(['attach', 'launch']).optional(),
+    /** http(s)/ws(s) CDP URL or a channel name (chrome, msedge, …) */
+    CDP_URL: emptyToUndef,
+    CDP_ATTACH_TAB: z.enum(['focused', 'url']).optional(),
+    CDP_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000),
+    /** Keep using the already-bound page; does not scan other tabs. */
     CDP_REUSE_TABS: boolFromEnv,
   })
   .superRefine((data, ctx) => {
@@ -121,6 +136,44 @@ const envSchema = z
         path: ['MAX_PAGES'],
       });
     }
+
+    const browserMode = data.BROWSER_MODE ?? 'launch';
+    const cdpUrl = data.CDP_URL;
+    const attachTab = data.CDP_ATTACH_TAB ?? 'focused';
+    const isAttach = browserMode === 'attach' || Boolean(cdpUrl);
+
+    if (cdpUrl && !isCdpEndpoint(cdpUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'CDP_URL must be an http(s)/ws(s) URL or a browser channel (chrome, chrome-beta, chrome-dev, chrome-canary, msedge, msedge-beta, msedge-dev, msedge-canary)',
+        path: ['CDP_URL'],
+      });
+    }
+
+    if (browserMode === 'attach' && !cdpUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'CDP_URL is required when BROWSER_MODE=attach',
+        path: ['CDP_URL'],
+      });
+    }
+
+    if (attachTab === 'url' && !data.CHATBOT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'CHATBOT_URL is required when CDP_ATTACH_TAB=url',
+        path: ['CHATBOT_URL'],
+      });
+    }
+
+    if (!isAttach && !data.CHATBOT_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'CHATBOT_URL is required when BROWSER_MODE=launch',
+        path: ['CHATBOT_URL'],
+      });
+    }
   })
   .transform((data) => {
     const fromList = data.API_KEYS
@@ -134,6 +187,10 @@ const envSchema = z
         : data.API_KEY
           ? [data.API_KEY]
           : [];
+
+    const browserMode = data.BROWSER_MODE ?? 'launch';
+    const cdpUrl = data.CDP_URL;
+    const isAttach = browserMode === 'attach' || Boolean(cdpUrl);
 
     return {
       host: data.HOST,
@@ -156,7 +213,11 @@ const envSchema = z
       logPrompts: data.LOG_PROMPTS ?? false,
       artifactsOnError: data.ARTIFACTS_ON_ERROR ?? true,
       browserChannel: data.BROWSER_CHANNEL,
-      cdpUrl: data.CDP_URL,
+      browserMode,
+      isAttach,
+      cdpUrl,
+      cdpAttachTab: data.CDP_ATTACH_TAB ?? 'focused',
+      cdpConnectTimeoutMs: data.CDP_CONNECT_TIMEOUT_MS,
       cdpReuseTabs: data.CDP_REUSE_TABS ?? true,
     };
   });

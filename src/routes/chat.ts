@@ -30,10 +30,12 @@ export function createChatRouter(config: AppConfig, pool: PagePool): Router {
           ok: false,
           code: 'TIMEOUT',
           partial: true,
+          error: typeof result.debug?.hint === 'string' ? result.debug.hint : 'Generation timed out',
           response: result.response,
           sessionId: body.data.sessionId ?? null,
           durationMs: result.durationMs,
           requestId,
+          debug: result.debug,
         });
         return;
       }

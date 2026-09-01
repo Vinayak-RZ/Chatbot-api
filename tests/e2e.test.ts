@@ -204,6 +204,7 @@ describe('E2E timeout partial', () => {
     expect(res.status).toBe(504);
     expect(res.body.partial).toBe(true);
     expect(typeof res.body.response).toBe('string');
+    expect(res.body.error || res.body.debug?.hint).toBeTruthy();
 
     const health = await request(app).get('/health');
     expect(health.status).toBe(200);

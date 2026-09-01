@@ -8,19 +8,29 @@ import {
 } from 'playwright';
 import type { AppConfig } from '../config/env.js';
 import { storageStateExists } from '../config/env.js';
+import { SELECTORS } from '../config/selectors.js';
 import { AppError } from '../errors.js';
 import { logger } from '../logger.js';
+import { inspectHint, resolveCdpEndpoint } from './cdp-endpoint.js';
+import { findFocusedPage, findMatchingUrlPage, urlsMatch } from './tab-bind.js';
 
 export class BrowserManager {
   private context: BrowserContext | null = null;
   /** Only set when attached via CDP — closing disconnects without killing Chrome. */
   private cdpBrowser: Browser | null = null;
   private relaunching = false;
+  private hasAdoptedDesignatedTab = false;
+  private readonly ownedPages = new WeakSet<Page>();
+  private readonly adoptedPages = new WeakSet<Page>();
 
   constructor(private readonly config: AppConfig) {}
 
   get isCdp(): boolean {
-    return Boolean(this.config.cdpUrl);
+    return this.config.isAttach;
+  }
+
+  get isAttach(): boolean {
+    return this.config.isAttach;
   }
 
   async start(): Promise<void> {
@@ -34,19 +44,48 @@ export class BrowserManager {
     return this.context;
   }
 
-  async newPage(): Promise<Page> {
+  async newPage(opts?: { forceNew?: boolean }): Promise<Page> {
     const ctx = this.getContext();
 
-    if (this.isCdp && this.config.cdpReuseTabs) {
-      const adopted = await this.findReusablePage(ctx);
+    const canAdopt =
+      this.isAttach &&
+      this.config.cdpReuseTabs &&
+      !opts?.forceNew &&
+      !this.hasAdoptedDesignatedTab;
+
+    if (canAdopt) {
+      const adopted = await this.bindDesignatedTab();
       if (adopted) {
-        logger.info({ url: adopted.url() }, 'Reusing existing CDP tab for chatbot');
-        await this.ensureChatReady(adopted, { navigateIfNeeded: true });
+        this.hasAdoptedDesignatedTab = true;
+        this.adoptedPages.add(adopted);
+        this.context = adopted.context();
+        logger.info(
+          { bind: this.config.cdpAttachTab },
+          this.config.cdpAttachTab === 'url'
+            ? 'Bound opted-in Chatbot URL tab'
+            : 'Bound focused tab',
+        );
+        await this.prepareAttachedPage(adopted);
+        await this.ensureChatReady(adopted);
         return adopted;
       }
+      if (this.config.cdpAttachTab === 'url') {
+        throw new AppError(
+          'BROWSER_UNAVAILABLE',
+          'No open tab matches CHATBOT_URL. Focus that tab or open it, then retry. Other tabs are not inspected.',
+          503,
+        );
+      }
+      throw new AppError(
+        'BROWSER_UNAVAILABLE',
+        'No focused tab. Bring the ChatGPT-like tab to the front, then retry. Other tabs are not inspected.',
+        503,
+      );
     }
 
     const page = await ctx.newPage();
+    this.ownedPages.add(page);
+    if (this.isAttach) await this.prepareAttachedPage(page);
     await this.preparePage(page);
     return page;
   }
@@ -54,12 +93,30 @@ export class BrowserManager {
   async preparePage(page: Page): Promise<void> {
     page.setDefaultTimeout(10_000);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
-    await this.ensureChatReady(page, { navigateIfNeeded: true });
+    await this.ensureChatReady(page);
+  }
+
+  /**
+   * CDP attach applies Playwright viewport emulation that makes clicks miss
+   * in a real Chrome window (overlays “intercept pointer events”).
+   */
+  private async prepareAttachedPage(page: Page): Promise<void> {
+    page.setDefaultTimeout(10_000);
+    page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+    try {
+      const session = await page.context().newCDPSession(page);
+      await session.send('Emulation.clearDeviceMetricsOverride');
+      await session.detach().catch(() => undefined);
+    } catch {
+      /* not all targets support this */
+    }
   }
 
   /** Open a page at an arbitrary URL (tests / recover). Does not require composer. */
   async newBlankPage(): Promise<Page> {
-    return this.getContext().newPage();
+    const page = await this.getContext().newPage();
+    this.ownedPages.add(page);
+    return page;
   }
 
   async close(): Promise<void> {
@@ -67,9 +124,9 @@ export class BrowserManager {
     const cdp = this.cdpBrowser;
     this.context = null;
     this.cdpBrowser = null;
+    this.hasAdoptedDesignatedTab = false;
 
     if (cdp) {
-      // Disconnect Playwright from Chrome — do not close the user's browser.
       try {
         await cdp.close();
         logger.info('Disconnected from CDP browser (Chrome left running)');
@@ -101,23 +158,45 @@ export class BrowserManager {
   }
 
   private async launch(): Promise<void> {
-    if (this.config.cdpUrl) {
-      await this.connectCdp(this.config.cdpUrl);
+    if (this.config.isAttach) {
+      const cdpUrl = this.config.cdpUrl;
+      if (!cdpUrl) {
+        throw new AppError(
+          'BROWSER_UNAVAILABLE',
+          'CDP_URL is required when BROWSER_MODE=attach',
+          503,
+        );
+      }
+      await this.connectCdp(cdpUrl);
       return;
     }
     await this.launchPersistent();
   }
 
   private async connectCdp(cdpUrl: string): Promise<void> {
-    logger.info({ cdpUrl }, 'Connecting to existing browser over CDP');
-    let browser: Browser;
-    try {
-      browser = await chromium.connectOverCDP(cdpUrl);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    logger.info({ cdp: cdpUrl }, 'Connecting to existing browser over CDP');
+    const deadline = Date.now() + this.config.cdpConnectTimeoutMs;
+    let lastErr: unknown;
+    let browser: Browser | undefined;
+
+    while (!browser) {
+      const remaining = Math.max(1_000, deadline - Date.now());
+      try {
+        const endpoint = resolveCdpEndpoint(cdpUrl);
+        browser = await chromium.connectOverCDP(endpoint, { timeout: remaining });
+      } catch (err) {
+        lastErr = err;
+        if (Date.now() >= deadline) break;
+        logger.warn({ cdp: cdpUrl }, `CDP connect retry. ${inspectHint(cdpUrl)}`);
+        await sleep(2_000);
+      }
+    }
+
+    if (!browser) {
+      const msg = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'timeout');
       throw new AppError(
         'BROWSER_UNAVAILABLE',
-        `CDP connect failed (${cdpUrl}). Start Chrome with --remote-debugging-port=9222. ${msg}`,
+        `CDP connect failed (${cdpUrl}). ${inspectHint(cdpUrl)} ${msg}`,
         503,
       );
     }
@@ -141,16 +220,23 @@ export class BrowserManager {
       logger.warn('CDP browser disconnected');
       this.context = null;
       this.cdpBrowser = null;
+      this.hasAdoptedDesignatedTab = false;
     });
 
-    const pages = context.pages();
-    logger.info(
-      { tabs: pages.length, urls: pages.map((p) => p.url()).slice(0, 5) },
-      'Attached to CDP browser',
-    );
+    logger.info('Attached to CDP browser');
+  }
+
+  /** True if this page was an already-open tab we bound, not a tab we created. */
+  wasAdopted(page: Page): boolean {
+    return this.adoptedPages.has(page);
   }
 
   private async launchPersistent(): Promise<void> {
+    const chatbotUrl = this.config.chatbotUrl;
+    if (!chatbotUrl) {
+      throw new AppError('BROWSER_UNAVAILABLE', 'CHATBOT_URL is required to launch a browser', 503);
+    }
+
     mkdirSync(this.config.userDataDir, { recursive: true });
     const launchOptions: Parameters<typeof chromium.launchPersistentContext>[1] = {
       headless: this.config.headless,
@@ -183,13 +269,14 @@ export class BrowserManager {
     // Chromium tears down launchPersistentContext when the last page closes.
     // Keep one tab and open the Chatbot URL so the headed window is useful immediately.
     let keep = context.pages().find((p) => !p.isClosed()) ?? (await context.newPage());
+    this.ownedPages.add(keep);
     for (const p of context.pages()) {
       if (p !== keep && !p.isClosed()) {
         await p.close().catch(() => undefined);
       }
     }
     try {
-      await keep.goto(this.config.chatbotUrl, { waitUntil: 'domcontentloaded' });
+      await keep.goto(chatbotUrl, { waitUntil: 'domcontentloaded' });
     } catch (err) {
       logger.warn(
         { err },
@@ -198,75 +285,67 @@ export class BrowserManager {
     }
   }
 
-  private async findReusablePage(ctx: BrowserContext): Promise<Page | null> {
-    let targetOrigin: string | null = null;
-    try {
-      targetOrigin = new URL(this.config.chatbotUrl).origin;
-    } catch {
-      /* Chatbot URL may be any string — skip origin matching */
+  private pagesInBrowser(): Page[] {
+    if (this.cdpBrowser) {
+      return this.cdpBrowser.contexts().flatMap((c) => c.pages().filter((p) => !p.isClosed()));
     }
-    const pages = ctx.pages().filter((p) => !p.isClosed());
-
-    if (targetOrigin) {
-      for (const page of pages) {
-        try {
-          const u = new URL(page.url());
-          if (u.origin === targetOrigin) {
-            return page;
-          }
-        } catch {
-          /* ignore invalid urls */
-        }
-      }
-    }
-
-    for (const page of pages) {
-      const hasComposer = await page
-        .locator('#prompt-textarea')
-        .isVisible()
-        .catch(() => false);
-      if (hasComposer) return page;
-    }
-
-    return null;
+    return this.getContext().pages().filter((p) => !p.isClosed());
   }
 
-  private async ensureChatReady(
-    page: Page,
-    opts: { navigateIfNeeded: boolean },
-  ): Promise<void> {
+  private async bindDesignatedTab(): Promise<Page | null> {
+    const pages = this.pagesInBrowser();
+    if (this.config.cdpAttachTab === 'url') {
+      const target = this.config.chatbotUrl;
+      if (!target) return null;
+      return findMatchingUrlPage(pages, target);
+    }
+    return findFocusedPage(pages, (page) =>
+      page.evaluate(() => document.hasFocus()).catch(() => false),
+    );
+  }
+
+  private canNavigate(page: Page): boolean {
+    const chatbotUrl = this.config.chatbotUrl;
+    if (!chatbotUrl) return false;
+    if (this.ownedPages.has(page)) return true;
+    if (this.adoptedPages.has(page) && urlsMatch(page.url(), chatbotUrl)) return true;
+    return false;
+  }
+
+  private async ensureChatReady(page: Page): Promise<void> {
     page.setDefaultTimeout(10_000);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
 
     const composerVisible = await page
-      .locator('#prompt-textarea')
+      .locator(SELECTORS.promptTextarea)
       .isVisible()
       .catch(() => false);
 
-    if (!composerVisible && opts.navigateIfNeeded) {
-      try {
-        await page.goto(this.config.chatbotUrl, { waitUntil: 'domcontentloaded' });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/ERR_CONNECTION_REFUSED|ECONNREFUSED|net::ERR_/i.test(msg)) {
-          throw new AppError(
-            'BROWSER_UNAVAILABLE',
-            `Cannot reach Chatbot URL: ${msg}`,
-            503,
-          );
+    if (!composerVisible && this.canNavigate(page)) {
+      const chatbotUrl = this.config.chatbotUrl;
+      if (!chatbotUrl) {
+        /* unreachable: canNavigate requires chatbotUrl */
+      } else {
+        try {
+          await page.goto(chatbotUrl, { waitUntil: 'domcontentloaded' });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/ERR_CONNECTION_REFUSED|ECONNREFUSED|net::ERR_/i.test(msg)) {
+            throw new AppError('BROWSER_UNAVAILABLE', `Cannot reach Chatbot URL: ${msg}`, 503);
+          }
+          throw err;
         }
-        throw err;
       }
     }
 
     try {
       await page
-        .locator('#prompt-textarea')
+        .locator(SELECTORS.promptTextarea)
         .waitFor({ state: 'visible', timeout: this.config.navigationTimeoutMs });
     } catch {
       throw new AppError(
         'SELECTOR_NOT_FOUND',
-        'Chat composer (#prompt-textarea) not found — is the Chatbot URL the chat UI / are you logged in?',
+        'Chat composer (#prompt-textarea) not found on the designated tab — is it the chat UI / are you logged in? Other tabs were not inspected.',
         502,
       );
     }
@@ -302,6 +381,10 @@ export class BrowserManager {
       logger.warn({ err }, 'Failed to apply storageState; continuing with profile only');
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 export function artifactsDir(requestId: string): string {

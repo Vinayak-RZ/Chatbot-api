@@ -122,6 +122,7 @@ export class PagePool {
 
     logger.info({ keyPrefix: apiKey.slice(0, 4) }, 'Binding new page for API key');
     const page = await this.browser.newPage();
+    const continueOpenChat = this.browser.wasAdopted(page);
     page.on('crash', () => {
       logger.error({ keyPrefix: apiKey.slice(0, 4) }, 'Page crashed');
       const slot = this.slots.get(apiKey);
@@ -135,7 +136,8 @@ export class PagePool {
       apiKey,
       page,
       queue: new PQueue({ concurrency: 1 }),
-      needsNewChat: true,
+      // Adopted tab: keep the open thread. Tabs we created still start with New chat.
+      needsNewChat: !continueOpenChat,
     };
     this.slots.set(apiKey, slot);
     return slot;
@@ -167,7 +169,7 @@ export class PagePool {
     try {
       // Open the replacement before closing the old tab — closing the last page
       // would shut down a persistent Chromium context.
-      const page = await this.browser.newPage();
+      const page = await this.browser.newPage({ forceNew: true });
       const old = slot.page;
       slot.page = page;
       slot.needsNewChat = true;
@@ -178,7 +180,7 @@ export class PagePool {
       logger.error({ err }, 'Failed to open replacement page; relaunching browser');
       this.slots.clear();
       await this.browser.relaunch();
-      const page = await this.browser.newPage();
+      const page = await this.browser.newPage({ forceNew: true });
       slot.page = page;
       slot.needsNewChat = true;
       this.slots.set(slot.apiKey, slot);

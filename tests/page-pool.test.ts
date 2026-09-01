@@ -14,12 +14,16 @@ function fakePage(): Page {
   } as unknown as Page;
 }
 
-function fakeBrowser(): BrowserManager {
+function fakeBrowser(overrides: Partial<BrowserManager> = {}): BrowserManager {
   return {
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     relaunch: vi.fn(async () => undefined),
     newPage: vi.fn(async () => fakePage()),
+    wasAdopted: vi.fn(() => false),
+    isCdp: false,
+    isAttach: false,
+    ...overrides,
   } as unknown as BrowserManager;
 }
 
@@ -110,5 +114,46 @@ describe('PagePool unit', () => {
     await expect(pool.send('nope', 'x', 'r')).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     } satisfies Partial<AppError>);
+  });
+
+  it('does not close bound pages on stop in attach/CDP mode', async () => {
+    const config = loadConfig({
+      API_KEY: 'k',
+      MAX_PAGES: '1',
+      BROWSER_MODE: 'attach',
+      CDP_URL: 'chrome',
+    });
+    const page = fakePage();
+    const browser = fakeBrowser({
+      isCdp: true,
+      isAttach: true,
+      newPage: vi.fn(async () => page),
+    });
+    const pool = new PagePool(config, browser, fakeChat());
+    await pool.send('k', 'hello', 'r1');
+    await pool.stop();
+    expect(page.close).not.toHaveBeenCalled();
+    expect(browser.close).toHaveBeenCalled();
+  });
+
+  it('continues the open chat on an adopted tab (no first-use New chat)', async () => {
+    const config = loadConfig({
+      API_KEY: 'k',
+      MAX_PAGES: '1',
+      BROWSER_MODE: 'attach',
+      CDP_URL: 'chrome',
+    });
+    const page = fakePage();
+    const chat = fakeChat();
+    const browser = fakeBrowser({
+      isCdp: true,
+      isAttach: true,
+      newPage: vi.fn(async () => page),
+      wasAdopted: vi.fn(() => true),
+    });
+    const pool = new PagePool(config, browser, chat);
+    await pool.send('k', 'hello', 'r1');
+    expect(chat.ensureNewChat).not.toHaveBeenCalled();
+    expect(chat.sendPrompt).toHaveBeenCalledTimes(1);
   });
 });
