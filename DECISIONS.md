@@ -18,6 +18,7 @@ Architecture decision records. Newest first in the index.
 | ADR-012 | Rate limit 10 rpm per API key | accepted |
 | ADR-013 | Playwright optimization playbook is normative | accepted |
 | ADR-014 | One page per API key (max 3); first-use New chat | accepted |
+| ADR-015 | CDP Input on the attached tab; no vision computer use | accepted |
 
 ---
 
@@ -103,3 +104,14 @@ Architecture decision records. Newest first in the index.
 **Context:** Multiple API keys must not share conversation context; default should stay light.  
 **Choice:** `MAX_PAGES` 1–3 (default 1); allowlist 1–3 keys; `Map<apiKey, {page, queue}>`; first use of a key always clicks New chat; same key continues on `/chat/send`; `/chat/new` scoped to that key’s page.  
 **Rejected:** One shared page for all keys; opening a new page per HTTP request; more than 3 pages.
+
+## ADR-015 — CDP Input on the attached tab
+
+**Context:** Playwright locator `click`/`fill` wait for OS focus and layout stability. The operator’s Chrome is in the background as soon as they use a terminal; Chrome 144 inspect-page debugging also disagrees with Playwright defaults. Vision “computer use” (screenshots + coordinates) would risk other tabs and add a model loop.
+
+**Choice:** Keep Playwright for `connectOverCDP` and designating one tab. On that tab only, type with `Runtime.evaluate` + CDP `Input.insertText`, click Send with `HTMLElement.click()`, scrape with in-page evaluate. Launch/mock CI keeps locators. Attach generation wait stays unlimited (ADR-006 still applies to launch).
+
+**Rejected:** Puppeteer rewrite (ADR-001); Playwright MCP / Chrome DevTools MCP as this service’s runtime; screenshot/vision computer use.
+
+**Consequences:** `src/automation/cdp-drive.ts`; attach `ensureChatReady` waits for composer `attached` not `visible`; no Playwright tracing on the shared attach context (would snapshot more than the bound tab).
+

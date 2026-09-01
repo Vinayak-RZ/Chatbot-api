@@ -47,6 +47,11 @@ export function userDataDirsForChannel(channel: CdpChannel): string[] {
   return [linux[channel]];
 }
 
+/** M144+ inspect-page debugging hangs Playwright on the UUID browser path. */
+export function inspectBrowserWsEndpoint(port: number): string {
+  return `ws://127.0.0.1:${port}/devtools/browser`;
+}
+
 export function parseDevToolsActivePort(contents: string): string | null {
   const lines = contents
     .split(/\r?\n/)
@@ -66,6 +71,47 @@ export function inspectHint(cdpUrl: string): string {
   const edge = cdpUrl.startsWith('msedge');
   const page = edge ? 'edge://inspect/#remote-debugging' : 'chrome://inspect/#remote-debugging';
   return `Enable remote debugging at ${page} and click Allow when prompted.`;
+}
+
+export function cdpHandshakeHint(): string {
+  return (
+    'WebSocket reached Chrome but the CDP handshake did not finish. Close tabs stuck on a spinner, ' +
+    'close the chrome://inspect page after enabling the toggle, and make sure no other debugger is attached. ' +
+    'Click Allow on the connection prompt (not only the inspect toggle).'
+  );
+}
+
+/** Keep host:port; drop browser UUID from logs. */
+export function redactCdpEndpoint(endpoint: string): string {
+  try {
+    const u = new URL(endpoint);
+    const pathOnly = u.pathname.replace(/\/[0-9a-f-]{8,}.*$/i, '/…');
+    return `${u.protocol}//${u.host}${pathOnly}`;
+  } catch {
+    return 'cdp';
+  }
+}
+
+/**
+ * Endpoints to try, in order. Channel attach prefers `/devtools/browser` (no UUID) —
+ * that is the path Playwright uses for chrome://inspect remote debugging.
+ */
+export function cdpEndpointCandidates(cdpUrl: string): string[] {
+  const primary = resolveCdpEndpoint(cdpUrl);
+  const out: string[] = [];
+  try {
+    const u = new URL(primary);
+    if (u.protocol === 'ws:' || u.protocol === 'wss:') {
+      if (u.port) {
+        const stripped = inspectBrowserWsEndpoint(Number(u.port));
+        out.push(stripped);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (!out.includes(primary)) out.push(primary);
+  return out;
 }
 
 /**

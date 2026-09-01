@@ -7,6 +7,14 @@ import { AppError } from '../errors.js';
 import { logger } from '../logger.js';
 import { artifactsDir } from './browser.js';
 import {
+  clearComposer,
+  composerAttached,
+  insertText,
+  readSubmitSnapshot,
+  submitComposer,
+  waitForSubmitSuccess,
+} from './cdp-drive.js';
+import {
   cleanAssistantText,
   extractLastAssistantProbe,
   scrapeTimeoutHint,
@@ -34,24 +42,54 @@ export class ChatAutomation {
       .or(page.locator(SELECTORS.legacyNewChat))
       .first();
 
-    await page.keyboard.press('Escape').catch(() => undefined);
-
-    try {
-      await this.clickControl(newChat, 10_000);
-    } catch {
-      throw new AppError(
-        'SELECTOR_NOT_FOUND',
-        'Could not click New chat (element covered or intercepting overlay). Dismiss dialogs on that tab and retry, or POST /chat/new after the sidebar is clickable.',
-        502,
-      );
+    if (this.config.isAttach) {
+      await page.evaluate(() => {
+        /* dismiss overlays without Playwright keyboard focus */
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }).catch(() => undefined);
+      const clicked = await page.evaluate((sels) => {
+        const nodes = [
+          ...document.querySelectorAll(sels.create),
+          ...document.querySelectorAll(sels.legacy),
+        ];
+        const byName = [...document.querySelectorAll('a,button')].filter((el) =>
+          /new chat/i.test(el.textContent || el.getAttribute('aria-label') || ''),
+        );
+        const el = nodes[0] ?? byName[0];
+        if (!(el instanceof HTMLElement)) return false;
+        el.click();
+        return true;
+      }, { create: SELECTORS.createNewChat, legacy: SELECTORS.legacyNewChat });
+      if (!clicked) {
+        throw new AppError(
+          'SELECTOR_NOT_FOUND',
+          'Could not click New chat (element covered or intercepting overlay). Dismiss dialogs on that tab and retry, or POST /chat/new after the sidebar is clickable.',
+          502,
+        );
+      }
+    } else {
+      await page.keyboard.press('Escape').catch(() => undefined);
+      try {
+        await this.clickControl(newChat, 10_000);
+      } catch {
+        throw new AppError(
+          'SELECTOR_NOT_FOUND',
+          'Could not click New chat (element covered or intercepting overlay). Dismiss dialogs on that tab and retry, or POST /chat/new after the sidebar is clickable.',
+          502,
+        );
+      }
     }
 
     await page.locator(SELECTORS.userMessage).waitFor({ state: 'detached', timeout: 5_000 }).catch(() => undefined);
     await page.locator(SELECTORS.assistantMessage).waitFor({ state: 'detached', timeout: 5_000 }).catch(() => undefined);
-    await page.locator(SELECTORS.promptTextarea).waitFor({ state: 'visible' });
+    if (this.config.isAttach) {
+      await page.locator(SELECTORS.promptTextarea).waitFor({ state: 'attached', timeout: 10_000 });
+    } else {
+      await page.locator(SELECTORS.promptTextarea).waitFor({ state: 'visible' });
+    }
   }
 
-  /** Real Chrome often has overlays; CDP attach can also mismatch click coordinates. */
+  /** Launch-mode clicks. Attach mode must not use this on the composer. */
   private async clickControl(locator: Locator, timeoutMs: number): Promise<void> {
     try {
       await locator.click({ timeout: timeoutMs });
@@ -71,12 +109,16 @@ export class ChatAutomation {
     let tracing = false;
 
     try {
-      if (this.config.artifactsOnError) {
+      if (this.config.artifactsOnError && !this.config.isAttach) {
         await page.context().tracing.start({ screenshots: true, snapshots: true });
         tracing = true;
       }
 
       await this.recoverSoft(page);
+      if (this.config.isAttach) {
+        return await this.sendPromptAttach(page, prompt, requestId, started, tracing);
+      }
+
       const baseline = await this.turnBaseline(page, prompt);
       logger.info(
         {
@@ -93,52 +135,7 @@ export class ChatAutomation {
       await this.submit(page);
 
       const wait = await this.waitForDone(page, baseline, prompt, requestId);
-      const probe = await this.probeAssistant(page, prompt);
-      const response = probe.text;
-
-      if (!response) {
-        const debug = this.debugSnapshot(wait, probe, baseline, Date.now() - started);
-        const hint = scrapeTimeoutHint({
-          source: probe.source,
-          copyButtons: probe.copyButtons,
-          assistantRoleNodes: probe.assistantRoleNodes,
-          actionRows: probe.actionRows,
-          scrapedChars: 0,
-          textChanged: false,
-          firstTokenSeen: wait.firstTokenSeen,
-          stopVisible: wait.stopVisible,
-        });
-        logger.warn({ requestId, ...debug }, hint);
-        throw new AppError('SELECTOR_NOT_FOUND', hint, 502, debug);
-      }
-
-      if (tracing) {
-        await page.context().tracing.stop();
-        tracing = false;
-      }
-
-      const result: ChatResult = {
-        response,
-        partial: wait.partial,
-        durationMs: Date.now() - started,
-      };
-      if (wait.partial) {
-        const debug = this.debugSnapshot(wait, probe, baseline, result.durationMs);
-        const hint = scrapeTimeoutHint({
-          source: probe.source,
-          copyButtons: probe.copyButtons,
-          assistantRoleNodes: probe.assistantRoleNodes,
-          actionRows: probe.actionRows,
-          scrapedChars: response.length,
-          textChanged: response !== baseline.text,
-          firstTokenSeen: wait.firstTokenSeen,
-          stopVisible: wait.stopVisible,
-        });
-        logger.warn({ requestId, ...debug, hint }, 'Generation timed out');
-        result.debug = { ...debug, hint };
-      }
-
-      return result;
+      return await this.finishSend(page, prompt, requestId, started, tracing, wait, baseline);
     } catch (err) {
       if (this.config.artifactsOnError) {
         await this.captureArtifacts(page, requestId, tracing).catch(() => undefined);
@@ -150,47 +147,179 @@ export class ChatAutomation {
     }
   }
 
+  private async sendPromptAttach(
+    page: Page,
+    prompt: string,
+    requestId: string,
+    started: number,
+    tracing: boolean,
+  ): Promise<ChatResult> {
+    await this.insertPrompt(page, prompt);
+    const baseline = await this.turnBaseline(page, prompt);
+    logger.info(
+      {
+        requestId,
+        baselineChars: baseline.text.length,
+        baselineCopies: baseline.copies,
+        baselineAssistants: baseline.assistants,
+        baselineActionRows: baseline.actionRows,
+        baselineSource: baseline.source,
+      },
+      'Scrape baseline after insert',
+    );
+    const before = await readSubmitSnapshot(page);
+    await submitComposer(page);
+    if (!(await waitForSubmitSuccess(page, before, prompt, this.config.submitAckMs))) {
+      throw new AppError(
+        'SELECTOR_NOT_FOUND',
+        'Submit did not start a turn (composer still holds the prompt and no Stop/user bubble appeared).',
+        502,
+      );
+    }
+    const wait = await this.waitForDone(page, baseline, prompt, requestId);
+    return this.finishSend(page, prompt, requestId, started, tracing, wait, baseline);
+  }
+
+  private async finishSend(
+    page: Page,
+    prompt: string,
+    requestId: string,
+    started: number,
+    tracing: boolean,
+    wait: {
+      partial: boolean;
+      firstTokenSeen: boolean;
+      firstTokenMs: number | null;
+      stopVisible: boolean;
+      stablePolls: number;
+    },
+    baseline: {
+      text: string;
+      copies: number;
+      assistants: number;
+      actionRows: number;
+      source: ScrapeProbe['source'];
+    },
+  ): Promise<ChatResult> {
+    const probe = await this.probeAssistant(page, prompt);
+    const response = probe.text;
+
+    if (!response) {
+      const debug = this.debugSnapshot(wait, probe, baseline, Date.now() - started);
+      const hint = scrapeTimeoutHint({
+        source: probe.source,
+        copyButtons: probe.copyButtons,
+        assistantRoleNodes: probe.assistantRoleNodes,
+        actionRows: probe.actionRows,
+        scrapedChars: 0,
+        textChanged: false,
+        firstTokenSeen: wait.firstTokenSeen,
+        stopVisible: wait.stopVisible,
+      });
+      logger.warn({ requestId, ...debug }, hint);
+      throw new AppError('SELECTOR_NOT_FOUND', hint, 502, debug);
+    }
+
+    if (tracing) {
+      await page.context().tracing.stop();
+    }
+
+    const result: ChatResult = {
+      response,
+      partial: wait.partial,
+      durationMs: Date.now() - started,
+    };
+    if (wait.partial) {
+      const debug = this.debugSnapshot(wait, probe, baseline, result.durationMs);
+      const hint = scrapeTimeoutHint({
+        source: probe.source,
+        copyButtons: probe.copyButtons,
+        assistantRoleNodes: probe.assistantRoleNodes,
+        actionRows: probe.actionRows,
+        scrapedChars: response.length,
+        textChanged: response !== baseline.text,
+        firstTokenSeen: wait.firstTokenSeen,
+        stopVisible: wait.stopVisible,
+      });
+      logger.warn({ requestId, ...debug, hint }, 'Generation timed out');
+      result.debug = { ...debug, hint };
+    }
+
+    return result;
+  }
+
   async recoverSoft(page: Page): Promise<void> {
+    if (this.config.isAttach) {
+      await page
+        .evaluate((sel) => {
+          const el = document.querySelector(sel);
+          if (el instanceof HTMLElement && !el.hidden) el.click();
+        }, SELECTORS.stopButton)
+        .catch(() => undefined);
+      await clearComposer(page);
+      return;
+    }
     const stop = page.locator(SELECTORS.stopButton);
     if (await stop.isVisible().catch(() => false)) {
-      await stop.click().catch(() => undefined);
+      await this.clickControl(stop, 3_000).catch(() => undefined);
     }
     await page.keyboard.press('Escape').catch(() => undefined);
-    const composer = page.locator(SELECTORS.promptTextarea);
-    if (await composer.isVisible().catch(() => false)) {
-      await composer.click({ timeout: 5_000 }).catch(() => undefined);
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A').catch(() => undefined);
-      await page.keyboard.press('Backspace').catch(() => undefined);
-    }
+    const composer = page.locator(SELECTORS.promptTextarea).first();
+    if ((await composer.count()) === 0) return;
+    await composer
+      .evaluate((el) => {
+        if (!(el instanceof HTMLElement)) return;
+        el.focus();
+        document.execCommand('selectAll', false);
+        document.execCommand('delete', false);
+      })
+      .catch(() => undefined);
   }
 
   async insertPrompt(page: Page, prompt: string): Promise<void> {
-    const composer = page.locator(SELECTORS.promptTextarea);
+    if (this.config.isAttach) {
+      if (!(await composerAttached(page))) {
+        throw new AppError(
+          'SELECTOR_NOT_FOUND',
+          'Composer (#prompt-textarea) not found on the bound tab',
+          502,
+        );
+      }
+      const ok = await insertText(page, prompt);
+      if (!ok) {
+        throw new AppError('SELECTOR_NOT_FOUND', 'Could not insert text into the composer', 502);
+      }
+      logger.info('Inserted prompt into composer');
+      return;
+    }
+
+    const composer = page.locator(SELECTORS.promptTextarea).first();
     await composer.waitFor({ state: 'visible', timeout: 10_000 });
     await composer.click();
     await composer.fill(prompt).catch(() => undefined);
-
-    const send = page.locator(SELECTORS.sendButton);
-    const ready = await send
-      .waitFor({ state: 'visible', timeout: 1500 })
-      .then(() => true)
-      .catch(() => false);
-
-    if (!ready || !(await send.isEnabled().catch(() => false))) {
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
-      await page.evaluate((text) => {
-        document.execCommand('selectAll', false);
-        document.execCommand('insertText', false, text);
-      }, prompt);
+    const hay = await composer.evaluate((el) => {
+      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return el.value;
+      if (el instanceof HTMLElement) return el.innerText || '';
+      return '';
+    });
+    if (!hay.includes(prompt)) {
+      const ok = await insertText(page, prompt);
+      if (!ok) {
+        throw new AppError('SELECTOR_NOT_FOUND', 'Could not insert text into the composer', 502);
+      }
     }
-
-    await send.waitFor({ state: 'visible', timeout: this.config.submitAckMs });
-    if (!(await send.isEnabled())) {
+    const send = page.locator(SELECTORS.sendButton);
+    await send.waitFor({ state: 'visible', timeout: this.config.submitAckMs }).catch(() => undefined);
+    if (!(await send.isEnabled().catch(() => false))) {
       throw new AppError('SELECTOR_NOT_FOUND', 'Send button did not become enabled after insert', 502);
     }
   }
 
   async submit(page: Page): Promise<void> {
+    if (this.config.isAttach) {
+      await submitComposer(page);
+      return;
+    }
     const send = page.locator(SELECTORS.sendButton);
     if (await send.isVisible().catch(() => false)) {
       await send.click();
@@ -350,7 +479,16 @@ export class ChatAutomation {
 
     stopVisible = await stop.isVisible().catch(() => false);
     if (stopVisible) {
-      await stop.click().catch(() => undefined);
+      if (this.config.isAttach) {
+        await page
+          .evaluate((sel) => {
+            const el = document.querySelector(sel);
+            if (el instanceof HTMLElement) el.click();
+          }, SELECTORS.stopButton)
+          .catch(() => undefined);
+      } else {
+        await stop.click().catch(() => undefined);
+      }
     }
     return {
       partial: true,

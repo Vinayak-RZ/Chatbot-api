@@ -30,6 +30,17 @@ Use `CDP_URL=msedge` for Edge. Or `CDP_URL=http://127.0.0.1:9222` if you started
 npm run dev
 ```
 
+If the API sits on **Connecting to existing browser over CDP** after you click Allow, that is the handshake (not the WebSocket). Close tabs stuck on a spinner, close the `chrome://inspect` page after the toggle is on, and restart `npm run dev`. You should see **CDP handshake starting** then **Attached to CDP browser**.
+
+Attach drive (Chrome 144+ / background window) does **not** use Playwright click/fill on the composer. After attach you should see, in order:
+
+1. `Attached to CDP browser`
+2. `Remembered front tab` and/or `Bound selected tab` / `Bound focused tab`
+3. `Inserted prompt into composer` — **hello** (or your prompt) must be in the box
+4. scrape progress (`Scrape baseline after insert`, then wait logs) or a 502 scrape hint
+
+`tsx` does not reload: Ctrl+C and `npm run dev` again after pulling code.
+
 5. Send a prompt:
 
 ```powershell
@@ -38,7 +49,7 @@ curl -X POST http://127.0.0.1:8787/chat/send -H "content-type: application/json"
 
 ### Which tab is driven
 
-- **`CDP_ATTACH_TAB=focused` (default):** only the tab that has keyboard focus. Any site is allowed. If that tab is not a ChatGPT-like UI (`#prompt-textarea`), the request fails and the page is left untouched. Background tabs are not inspected.
+- **`CDP_ATTACH_TAB=focused` (default):** the selected tab in your Chrome window. You can switch to a terminal to send the request — Chrome does not need OS focus. If that tab is not a ChatGPT-like UI (`#prompt-textarea`), the request fails and the page is left untouched. Background tabs are not inspected.
 - **`CDP_ATTACH_TAB=url`:** set `CHATBOT_URL` to the page you opt in. Only a tab on that origin is eligible. If none matches, the API fails closed — it does not crawl other tabs or navigate a personal page.
 
 `CHATBOT_URL` is optional in focused attach mode. Extra API keys (`MAX_PAGES` > 1) get **new** tabs the API creates (they can open `CHATBOT_URL` if you set it); they do not adopt other tabs you already had open.

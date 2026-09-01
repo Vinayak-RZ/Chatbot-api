@@ -4,7 +4,7 @@
 > **Mode:** project  
 > Maintain [`PROGRESS.md`](./PROGRESS.md) during execution.
 
-**This session / current gate:** Final execution on `feat/v1-bridge` (Phases A–G). Phase H blocked on owned URL + storageState.
+**This session / current gate:** Attach CDP drive on `feat/v1-bridge` is implemented (`src/automation/cdp-drive.ts`, ADR-015). Launch/mock CI still uses locators. Operator must restart `npm run dev` (tsx does not hot-reload), then confirm **hello** in the composer. Phase H owned URL/session is still optional. See [`docs/CUTOVER.md`](./docs/CUTOVER.md).
 
 ---
 

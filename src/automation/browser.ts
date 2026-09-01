@@ -11,8 +11,19 @@ import { storageStateExists } from '../config/env.js';
 import { SELECTORS } from '../config/selectors.js';
 import { AppError } from '../errors.js';
 import { logger } from '../logger.js';
-import { inspectHint, resolveCdpEndpoint } from './cdp-endpoint.js';
-import { findFocusedPage, findMatchingUrlPage, urlsMatch } from './tab-bind.js';
+import {
+  cdpEndpointCandidates,
+  cdpHandshakeHint,
+  inspectHint,
+  redactCdpEndpoint,
+} from './cdp-endpoint.js';
+import {
+  findFrontPage,
+  findMatchingUrlPage,
+  isInternalBrowserUrl,
+  urlsMatch,
+  type FrontPageResult,
+} from './tab-bind.js';
 
 export class BrowserManager {
   private context: BrowserContext | null = null;
@@ -20,6 +31,8 @@ export class BrowserManager {
   private cdpBrowser: Browser | null = null;
   private relaunching = false;
   private hasAdoptedDesignatedTab = false;
+  /** Selected tab at attach time — used when the operator has switched to a terminal. */
+  private rememberedFront: Page | null = null;
   private readonly ownedPages = new WeakSet<Page>();
   private readonly adoptedPages = new WeakSet<Page>();
 
@@ -54,31 +67,27 @@ export class BrowserManager {
       !this.hasAdoptedDesignatedTab;
 
     if (canAdopt) {
-      const adopted = await this.bindDesignatedTab();
-      if (adopted) {
-        this.hasAdoptedDesignatedTab = true;
-        this.adoptedPages.add(adopted);
-        this.context = adopted.context();
-        logger.info(
-          { bind: this.config.cdpAttachTab },
-          this.config.cdpAttachTab === 'url'
-            ? 'Bound opted-in Chatbot URL tab'
-            : 'Bound focused tab',
-        );
-        await this.prepareAttachedPage(adopted);
-        await this.ensureChatReady(adopted);
-        return adopted;
+      const result = await this.resolveDesignatedTab();
+      if (result.ok) {
+        return this.finishAdopt(result.page, result.reason);
       }
-      if (this.config.cdpAttachTab === 'url') {
+      if (this.config.cdpAttachTab === 'url' || result.reason === 'no-url-match') {
         throw new AppError(
           'BROWSER_UNAVAILABLE',
           'No open tab matches CHATBOT_URL. Focus that tab or open it, then retry. Other tabs are not inspected.',
           503,
         );
       }
+      if (result.reason === 'ambiguous') {
+        throw new AppError(
+          'BROWSER_UNAVAILABLE',
+          'More than one Chrome window is visible. Click the chat tab in the window you want, then retry. Other tabs are not inspected.',
+          503,
+        );
+      }
       throw new AppError(
         'BROWSER_UNAVAILABLE',
-        'No focused tab. Bring the ChatGPT-like tab to the front, then retry. Other tabs are not inspected.',
+        'No front tab. Click the chat tab so it is selected (Chrome can stay in the background), then retry. Other tabs are not inspected.',
         503,
       );
     }
@@ -174,29 +183,53 @@ export class BrowserManager {
   }
 
   private async connectCdp(cdpUrl: string): Promise<void> {
-    logger.info({ cdp: cdpUrl }, 'Connecting to existing browser over CDP');
+    logger.info(
+      { cdp: cdpUrl },
+      'Connecting to existing browser over CDP — click Allow in Chrome if a dialog is showing',
+    );
     const deadline = Date.now() + this.config.cdpConnectTimeoutMs;
+    const attemptMs = Math.min(20_000, this.config.cdpConnectTimeoutMs);
     let lastErr: unknown;
     let browser: Browser | undefined;
 
     while (!browser) {
-      const remaining = Math.max(1_000, deadline - Date.now());
+      let candidates: string[];
       try {
-        const endpoint = resolveCdpEndpoint(cdpUrl);
-        browser = await chromium.connectOverCDP(endpoint, { timeout: remaining });
+        candidates = cdpEndpointCandidates(cdpUrl);
       } catch (err) {
         lastErr = err;
         if (Date.now() >= deadline) break;
-        logger.warn({ cdp: cdpUrl }, `CDP connect retry. ${inspectHint(cdpUrl)}`);
+        logger.warn({ cdp: cdpUrl }, `CDP endpoint not ready. ${inspectHint(cdpUrl)}`);
         await sleep(2_000);
+        continue;
       }
+
+      for (const endpoint of candidates) {
+        if (Date.now() >= deadline) break;
+        const remaining = Math.min(attemptMs, Math.max(1_000, deadline - Date.now()));
+        try {
+          browser = await this.connectOverCdpOnce(endpoint, remaining);
+          break;
+        } catch (err) {
+          lastErr = err;
+          logger.warn(
+            { endpoint: redactCdpEndpoint(endpoint) },
+            `CDP handshake attempt failed. ${inspectHint(cdpUrl)}`,
+          );
+        }
+      }
+
+      if (browser || Date.now() >= deadline) break;
+      logger.warn({ cdp: cdpUrl }, `CDP connect retry. ${inspectHint(cdpUrl)}`);
+      await sleep(2_000);
     }
 
     if (!browser) {
       const msg = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'timeout');
+      const handshake = /ws connected/i.test(msg) ? ` ${cdpHandshakeHint()}` : '';
       throw new AppError(
         'BROWSER_UNAVAILABLE',
-        `CDP connect failed (${cdpUrl}). ${inspectHint(cdpUrl)} ${msg}`,
+        `CDP connect failed (${cdpUrl}). ${inspectHint(cdpUrl)}${handshake} ${msg}`,
         503,
       );
     }
@@ -221,9 +254,38 @@ export class BrowserManager {
       this.context = null;
       this.cdpBrowser = null;
       this.hasAdoptedDesignatedTab = false;
+      this.rememberedFront = null;
     });
 
     logger.info('Attached to CDP browser');
+    await this.rememberFrontTab();
+  }
+
+  /**
+   * Attach without Playwright's default context overrides (focus/media/download).
+   * Those commands never complete on Chrome's inspect-page debugging and look like a hang
+   * after `<ws connected>`.
+   */
+  private async connectOverCdpOnce(endpoint: string, timeoutMs: number): Promise<Browser> {
+    logger.info(
+      { endpoint: redactCdpEndpoint(endpoint), timeoutMs },
+      'CDP handshake starting',
+    );
+    const tick = setInterval(() => {
+      logger.info(
+        { endpoint: redactCdpEndpoint(endpoint) },
+        'Still waiting for CDP handshake — click Allow in Chrome if a dialog is showing',
+      );
+    }, 5_000);
+    try {
+      return await chromium.connectOverCDP(endpoint, {
+        timeout: timeoutMs,
+        noDefaults: true,
+        isLocal: true,
+      });
+    } finally {
+      clearInterval(tick);
+    }
   }
 
   /** True if this page was an already-open tab we bound, not a tab we created. */
@@ -292,16 +354,69 @@ export class BrowserManager {
     return this.getContext().pages().filter((p) => !p.isClosed());
   }
 
-  private async bindDesignatedTab(): Promise<Page | null> {
-    const pages = this.pagesInBrowser();
+  private contentPages(): Page[] {
+    return this.pagesInBrowser().filter((p) => !isInternalBrowserUrl(p.url()));
+  }
+
+  private async rememberFrontTab(): Promise<void> {
+    if (this.config.cdpAttachTab !== 'focused') return;
+    const result = await this.probeFrontTab();
+    if (!result.ok) return;
+    this.rememberedFront = result.page;
+    logger.info({ bind: result.reason }, 'Remembered front tab');
+  }
+
+  private async finishAdopt(page: Page, reason: 'focused' | 'visible' | 'url'): Promise<Page> {
+    this.hasAdoptedDesignatedTab = true;
+    this.rememberedFront = page;
+    this.adoptedPages.add(page);
+    this.context = page.context();
+    logger.info(
+      { bind: reason },
+      reason === 'url'
+        ? 'Bound opted-in Chatbot URL tab'
+        : reason === 'visible'
+          ? 'Bound selected tab'
+          : 'Bound focused tab',
+    );
+    await this.prepareAttachedPage(page);
+    await this.ensureChatReady(page);
+    return page;
+  }
+
+  private async probeFrontTab(): Promise<FrontPageResult<Page>> {
+    return findFrontPage(this.contentPages(), async (page) => {
+      const state = await page.evaluate(() => {
+        if (document.hasFocus()) return 'focused' as const;
+        if (document.visibilityState === 'visible' && !document.hidden) return 'visible' as const;
+        return 'hidden' as const;
+      });
+      return state;
+    });
+  }
+
+  private async resolveDesignatedTab(): Promise<
+    | { ok: true; page: Page; reason: 'focused' | 'visible' | 'url' }
+    | { ok: false; reason: 'none' | 'ambiguous' | 'no-url-match' }
+  > {
+    const remembered = this.rememberedFront;
+    if (remembered?.isClosed()) this.rememberedFront = null;
+    if (this.rememberedFront && !this.hasAdoptedDesignatedTab && this.config.cdpAttachTab === 'focused') {
+      return { ok: true, page: this.rememberedFront, reason: 'visible' };
+    }
+
+    const pages = this.contentPages();
     if (this.config.cdpAttachTab === 'url') {
       const target = this.config.chatbotUrl;
-      if (!target) return null;
-      return findMatchingUrlPage(pages, target);
+      if (!target) return { ok: false, reason: 'no-url-match' };
+      const match = findMatchingUrlPage(pages, target);
+      if (!match) return { ok: false, reason: 'no-url-match' };
+      return { ok: true, page: match, reason: 'url' };
     }
-    return findFocusedPage(pages, (page) =>
-      page.evaluate(() => document.hasFocus()).catch(() => false),
-    );
+
+    const front = await this.probeFrontTab();
+    if (front.ok) return front;
+    return { ok: false, reason: front.reason };
   }
 
   private canNavigate(page: Page): boolean {
@@ -315,6 +430,25 @@ export class BrowserManager {
   private async ensureChatReady(page: Page): Promise<void> {
     page.setDefaultTimeout(10_000);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+
+    const composerMissing = async (): Promise<void> => {
+      throw new AppError(
+        'SELECTOR_NOT_FOUND',
+        'Chat composer (#prompt-textarea) not found on the designated tab — is it the chat UI / are you logged in? Other tabs were not inspected.',
+        502,
+      );
+    };
+
+    if (this.isAttach) {
+      try {
+        await page
+          .locator(SELECTORS.promptTextarea)
+          .waitFor({ state: 'attached', timeout: this.config.navigationTimeoutMs });
+      } catch {
+        await composerMissing();
+      }
+      return;
+    }
 
     const composerVisible = await page
       .locator(SELECTORS.promptTextarea)
@@ -343,11 +477,7 @@ export class BrowserManager {
         .locator(SELECTORS.promptTextarea)
         .waitFor({ state: 'visible', timeout: this.config.navigationTimeoutMs });
     } catch {
-      throw new AppError(
-        'SELECTOR_NOT_FOUND',
-        'Chat composer (#prompt-textarea) not found on the designated tab — is it the chat UI / are you logged in? Other tabs were not inspected.',
-        502,
-      );
+      await composerMissing();
     }
   }
 

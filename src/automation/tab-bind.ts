@@ -42,3 +42,49 @@ export async function findFocusedPage<T extends { isClosed(): boolean }>(
   }
   return null;
 }
+
+export type PageFrontness = 'focused' | 'visible' | 'hidden';
+
+export type FrontPageResult<T> =
+  | { ok: true; page: T; reason: 'focused' | 'visible' }
+  | { ok: false; reason: 'none' | 'ambiguous' };
+
+/**
+ * OS focus (`document.hasFocus`) is false as soon as the operator switches to
+ * a terminal. The selected tab in a non-minimized window stays `visible`.
+ * Prefer a focused tab; otherwise the unique visible content tab.
+ */
+export async function findFrontPage<T extends { isClosed(): boolean }>(
+  pages: T[],
+  probe: (page: T) => Promise<PageFrontness>,
+): Promise<FrontPageResult<T>> {
+  let focused: T | undefined;
+  const visible: T[] = [];
+  for (const page of pages) {
+    if (page.isClosed()) continue;
+    const state = await probe(page).catch((): PageFrontness => 'hidden');
+    if (state === 'focused' && !focused) focused = page;
+    if (state === 'focused' || state === 'visible') visible.push(page);
+  }
+  if (focused) return { ok: true, page: focused, reason: 'focused' };
+  if (visible.length === 1) {
+    const page = visible[0];
+    if (page) return { ok: true, page, reason: 'visible' };
+  }
+  if (visible.length > 1) return { ok: false, reason: 'ambiguous' };
+  return { ok: false, reason: 'none' };
+}
+
+/** chrome://inspect and extension targets — skip without logging the URL. */
+export function isInternalBrowserUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'devtools:' || u.protocol === 'chrome-extension:') return true;
+    if (u.protocol === 'chrome:' || u.protocol === 'edge:') {
+      return /inspect/i.test(`${u.hostname}${u.pathname}`);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}

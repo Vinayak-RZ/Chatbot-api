@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { findFocusedPage, findMatchingUrlPage, urlsMatch } from '../src/automation/tab-bind.js';
-import { parseDevToolsActivePort } from '../src/automation/cdp-endpoint.js';
+import { findFocusedPage, findFrontPage, findMatchingUrlPage, isInternalBrowserUrl, urlsMatch } from '../src/automation/tab-bind.js';
+import {
+  cdpEndpointCandidates,
+  inspectBrowserWsEndpoint,
+  parseDevToolsActivePort,
+  redactCdpEndpoint,
+} from '../src/automation/cdp-endpoint.js';
 
 function page(url: string, closed = false) {
   const locators: string[] = [];
@@ -44,6 +49,49 @@ describe('findMatchingUrlPage', () => {
   });
 });
 
+describe('findFrontPage', () => {
+  it('prefers a focused tab over other visible tabs', async () => {
+    const a = page('https://personal.example/a');
+    const b = page('http://127.0.0.1:4173/');
+    const c = page('https://personal.example/c');
+    const found = await findFrontPage([a, b, c], async (p) => {
+      if (p === b) return 'focused';
+      if (p === a) return 'visible';
+      return 'hidden';
+    });
+    expect(found).toEqual({ ok: true, page: b, reason: 'focused' });
+  });
+
+  it('uses the unique visible tab when nothing has OS focus', async () => {
+    const a = page('https://personal.example/a');
+    const b = page('http://127.0.0.1:4173/');
+    const found = await findFrontPage([a, b], async (p) => (p === b ? 'visible' : 'hidden'));
+    expect(found).toEqual({ ok: true, page: b, reason: 'visible' });
+  });
+
+  it('fails closed when two windows are visible and none has OS focus', async () => {
+    const a = page('https://personal.example/a');
+    const b = page('http://127.0.0.1:4173/');
+    const found = await findFrontPage([a, b], async () => 'visible');
+    expect(found).toEqual({ ok: false, reason: 'ambiguous' });
+  });
+
+  it('fails closed when every tab is hidden', async () => {
+    const found = await findFrontPage([page('https://personal.example/a')], async () => 'hidden');
+    expect(found).toEqual({ ok: false, reason: 'none' });
+  });
+});
+
+describe('isInternalBrowserUrl', () => {
+  it('skips inspect and extension targets without treating them as content tabs', () => {
+    expect(isInternalBrowserUrl('chrome://inspect/#remote-debugging')).toBe(true);
+    expect(isInternalBrowserUrl('edge://inspect/#remote-debugging')).toBe(true);
+    expect(isInternalBrowserUrl('devtools://devtools/bundled/inspector.html')).toBe(true);
+    expect(isInternalBrowserUrl('https://example.test/chat')).toBe(false);
+    expect(isInternalBrowserUrl('chrome://newtab/')).toBe(false);
+  });
+});
+
 describe('findFocusedPage', () => {
   it('returns the first focused page and does not keep probing after a hit', async () => {
     const a = page('https://personal.example/a');
@@ -76,12 +124,37 @@ describe('parseDevToolsActivePort', () => {
   });
 });
 
+describe('cdpEndpointCandidates', () => {
+  it('tries /devtools/browser before the UUID path from DevToolsActivePort', () => {
+    expect(
+      cdpEndpointCandidates('ws://127.0.0.1:62509/devtools/browser/077b629f-469f-4146-a000-a2b2a19cc6fd'),
+    ).toEqual([
+      'ws://127.0.0.1:62509/devtools/browser',
+      'ws://127.0.0.1:62509/devtools/browser/077b629f-469f-4146-a000-a2b2a19cc6fd',
+    ]);
+    expect(inspectBrowserWsEndpoint(62509)).toBe('ws://127.0.0.1:62509/devtools/browser');
+  });
+
+  it('does not duplicate when the URL is already the inspect path', () => {
+    expect(cdpEndpointCandidates('ws://127.0.0.1:9222/devtools/browser')).toEqual([
+      'ws://127.0.0.1:9222/devtools/browser',
+    ]);
+  });
+
+  it('redacts the browser UUID from logs', () => {
+    expect(redactCdpEndpoint('ws://127.0.0.1:62509/devtools/browser/077b629f-469f-4146-a000-a2b2a19cc6fd')).toBe(
+      'ws://127.0.0.1:62509/devtools/browser/…',
+    );
+  });
+});
+
 describe('privacy: bind helpers never query chat selectors', () => {
   it('does not call locator on any page', async () => {
     const spy = vi.fn();
     const p = { ...page('https://personal.example/'), locator: spy };
     findMatchingUrlPage([p], 'http://127.0.0.1:4173');
     await findFocusedPage([p], async () => false);
+    await findFrontPage([p], async () => 'hidden');
     expect(spy).not.toHaveBeenCalled();
   });
 });
